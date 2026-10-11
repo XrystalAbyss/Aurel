@@ -28,6 +28,25 @@ function getDefaultErrorCode(status: number): string {
   }
 }
 
+function getDefaultTitle(status: number): string {
+  switch (status) {
+    case HttpStatus.BAD_REQUEST:
+      return 'Bad Request';
+    case HttpStatus.UNAUTHORIZED:
+      return 'Unauthorized';
+    case HttpStatus.FORBIDDEN:
+      return 'Forbidden';
+    case HttpStatus.NOT_FOUND:
+      return 'Not Found';
+    case HttpStatus.CONFLICT:
+      return 'Conflict';
+    case HttpStatus.METHOD_NOT_ALLOWED:
+      return 'Method Not Allowed';
+    default:
+      return status >= 500 ? 'Internal Server Error' : 'HTTP Error';
+  }
+}
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
@@ -46,6 +65,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       code = getDefaultErrorCode(status);
+      title = getDefaultTitle(status);
       const exceptionResponse = exception.getResponse();
 
       if (typeof exceptionResponse === 'string') {

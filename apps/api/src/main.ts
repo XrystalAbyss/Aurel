@@ -57,6 +57,7 @@ async function bootstrap(): Promise<void> {
     .setDescription('Core REST API for Aurel Table Storefront and Aurel Operations Workspace')
     .setVersion('1.0.0')
     .addTag('System', 'System liveness, readiness, and metrics')
+    .addTag('Authentication', 'Customer registration and identity management')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
