@@ -87,3 +87,19 @@ export enum TableSessionStatus {
   BILLED = 'BILLED',
   CLOSED = 'CLOSED',
 }
+
+export interface RegisterCustomerRequest {
+  email: string;
+  password: string;
+  fullName: string;
+  phone?: string;
+}
+
+export interface PublicUserResponse {
+  id: string;
+  email: string;
+  fullName: string;
+  phone?: string | null;
+  isActive: boolean;
+  createdAt: string;
+}
