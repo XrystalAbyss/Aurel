@@ -34,23 +34,23 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
+      - name: Setup pnpm (pinned v12.11.2)
+        uses: pnpm/action-setup@v6
+        with:
+          version: 12.11.2
+
       - name: Setup Node.js 24 LTS
         uses: actions/setup-node@v4
         with:
           node-version: 24
-
-      - name: Setup pnpm (pinned v12.11.2)
-        uses: pnpm/action-setup@v4
-        with:
-          version: 12.11.2
+          cache: 'pnpm'
 
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Initialize Test Database
         run: |
-          sudo apt-get install -y postgresql-client
-          PGPASSWORD=ci_password_123 psql -h localhost -U postgres -d postgres -c "CREATE DATABASE aurel_test;"
+          node -e "const { Client } = require('./apps/api/node_modules/pg'); const c = new Client({ connectionString: 'postgresql://postgres:ci_password_123@localhost:5432/postgres' }); c.connect().then(() => c.query('CREATE DATABASE aurel_test;')).then(() => c.end()).catch(e => { console.log(e.message); c.end(); });"
 
       - name: Build Shared Types
         run: pnpm --filter @aurel/shared-types build
