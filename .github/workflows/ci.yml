@@ -1,0 +1,82 @@
+name: Aurel Platform CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Build, Lint & Automated Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_password_123
+          POSTGRES_DB: aurel_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: 'postgresql://postgres:ci_password_123@localhost:5432/aurel_dev?schema=public'
+      TEST_DATABASE_URL: 'postgresql://postgres:ci_password_123@localhost:5432/aurel_test?schema=public'
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup pnpm (pinned v12.11.2)
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Initialize Test Database
+        run: |
+          sudo apt-get install -y postgresql-client
+          PGPASSWORD=ci_password_123 psql -h localhost -U postgres -d postgres -c "CREATE DATABASE aurel_test;"
+
+      - name: Build Shared Types
+        run: pnpm --filter @aurel/shared-types build
+
+      - name: Generate Prisma 7 Client
+        run: pnpm db:generate
+
+      - name: Apply Database Migrations
+        run: |
+          pnpm db:migrate:deploy
+          DATABASE_URL="$TEST_DATABASE_URL" pnpm db:migrate:deploy
+
+      - name: Verify Code Style (Prettier)
+        run: pnpm format:check
+
+      - name: Verify Linting (ESLint)
+        run: pnpm lint
+
+      - name: Verify TypeScript Types
+        run: pnpm typecheck
+
+      - name: Execute Unit Tests
+        run: pnpm test
+
+      - name: Execute End-to-End API Tests
+        run: pnpm test:e2e
+
+      - name: Build All Workspaces
+        run: pnpm build

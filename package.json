@@ -1,0 +1,32 @@
+{
+  "name": "aurel-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=12.0.0"
+  },
+  "scripts": {
+    "build": "pnpm --filter @aurel/shared-types build && pnpm --filter @aurel/api build && pnpm --filter @aurel/storefront build && pnpm --filter @aurel/operations build",
+    "dev:api": "pnpm --filter @aurel/api dev",
+    "dev:storefront": "pnpm --filter @aurel/storefront dev",
+    "dev:operations": "pnpm --filter @aurel/operations dev",
+    "typecheck": "pnpm --filter @aurel/shared-types typecheck && pnpm --filter @aurel/api typecheck && pnpm --filter @aurel/storefront typecheck && pnpm --filter @aurel/operations typecheck",
+    "test": "pnpm --filter @aurel/api test",
+    "test:e2e": "pnpm --filter @aurel/api test:e2e",
+    "db:generate": "pnpm --filter @aurel/api db:generate",
+    "db:migrate": "pnpm --filter @aurel/api db:migrate",
+    "db:migrate:deploy": "pnpm --filter @aurel/api db:migrate:deploy",
+    "lint": "eslint .",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "eslint": "^9.20.0",
+    "prettier": "^3.5.1",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.24.0"
+  }
+}
