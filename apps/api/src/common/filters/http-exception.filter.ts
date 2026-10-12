@@ -23,6 +23,8 @@ function getDefaultErrorCode(status: number): string {
       return ErrorCode.CONFLICT;
     case HttpStatus.METHOD_NOT_ALLOWED:
       return ErrorCode.METHOD_NOT_ALLOWED;
+    case HttpStatus.TOO_MANY_REQUESTS:
+      return ErrorCode.TOO_MANY_REQUESTS;
     default:
       return status >= 500 ? ErrorCode.INTERNAL_ERROR : 'HTTP_ERROR';
   }
@@ -42,6 +44,8 @@ function getDefaultTitle(status: number): string {
       return 'Conflict';
     case HttpStatus.METHOD_NOT_ALLOWED:
       return 'Method Not Allowed';
+    case HttpStatus.TOO_MANY_REQUESTS:
+      return 'Too Many Requests';
     default:
       return status >= 500 ? 'Internal Server Error' : 'HTTP Error';
   }
@@ -77,6 +81,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         if (typeof resp['code'] === 'string') {
           code = resp['code'];
         }
+        if (resp['retryAfter'] !== undefined) {
+          response.setHeader('Retry-After', String(resp['retryAfter']));
+        }
         if (Array.isArray(resp['message'])) {
           detail = 'Validation failed for one or more fields.';
           errors = { validation: resp['message'] as string[] };
@@ -84,7 +91,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         }
       }
     } else if (exception instanceof Error) {
-      detail = exception.message;
+      detail = 'An unexpected internal server error occurred.';
       this.logger.error(`Unhandled Exception: ${exception.message}`, exception.stack);
     }
 

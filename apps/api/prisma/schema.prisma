@@ -39,7 +39,27 @@ model User {
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
+  sessions     AuthSession[]
+
   @@index([createdAt])
   @@index([phone])
   @@map("users")
+}
+
+/// Authentication session entity representing server-side authenticated sessions
+model AuthSession {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenDigest String    @unique @map("token_digest") @db.VarChar(64)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz
+  lastSeenAt  DateTime? @map("last_seen_at") @db.Timestamptz
+  userAgent   String?   @map("user_agent") @db.VarChar(500)
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("auth_sessions")
 }

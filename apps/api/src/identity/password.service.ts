@@ -16,6 +16,9 @@ export const ARGON2ID_OPTIONS: argon2.HashOptions & { raw: false } = {
   raw: false,
 };
 
+export const DUMMY_ARGON2ID_HASH =
+  '$argon2id$v=19$m=65536,p=4,t=3$EpXycs6kjozovwM4ABMvXQ$+oW4ehZbic0i9KU/PSr/I96TueowCA+mcsaydZChoGA';
+
 @Injectable()
 export class PasswordService {
   private readonly logger = new Logger(PasswordService.name);
@@ -46,6 +49,22 @@ export class PasswordService {
     } catch {
       // Safely catch malformed hash errors or cryptographic mismatches without crashing
       this.logger.warn('Password verification failed due to invalid hash format or internal error');
+      return false;
+    }
+  }
+
+  /**
+   * Executes a constant-time dummy verification against a standardized Argon2id hash.
+   * Eliminates user enumeration side channels caused by timing discrepancies when accounts do not exist.
+   */
+  async verifyDummy(plain: string): Promise<boolean> {
+    try {
+      if (!plain || typeof plain !== 'string') {
+        return false;
+      }
+      await argon2.verify(DUMMY_ARGON2ID_HASH, plain);
+      return false;
+    } catch {
       return false;
     }
   }
