@@ -20,6 +20,8 @@ export enum ErrorCode {
   FORBIDDEN = 'FORBIDDEN',
   CONFLICT = 'CONFLICT',
   METHOD_NOT_ALLOWED = 'METHOD_NOT_ALLOWED',
+  TOO_MANY_REQUESTS = 'TOO_MANY_REQUESTS',
+  CSRF_ERROR = 'CSRF_ERROR',
   INTERNAL_ERROR = 'INTERNAL_ERROR',
 }
 
@@ -102,4 +104,18 @@ export interface PublicUserResponse {
   phone?: string | null;
   isActive: boolean;
   createdAt: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface LogoutResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface CsrfTokenResponse {
+  csrfToken: string;
 }

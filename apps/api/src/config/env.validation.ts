@@ -31,6 +31,14 @@ export class EnvironmentVariables {
   @IsString()
   @IsOptional()
   SESSION_SECRET: string = 'default_insecure_development_secret_32_chars';
+
+  @IsString()
+  @IsOptional()
+  CSRF_SECRET: string = 'default_insecure_csrf_secret_min_32_chars';
+
+  @Type(() => Boolean)
+  @IsOptional()
+  TRUST_PROXY: boolean = false;
 }
 
 export function validateEnvironment(config: Record<string, unknown>): EnvironmentVariables {
@@ -45,6 +53,35 @@ export function validateEnvironment(config: Record<string, unknown>): Environmen
       .map((err) => Object.values(err.constraints || {}).join(', '))
       .join('; ');
     throw new Error(`Environment validation failed: ${messages}`);
+  }
+
+  // Strict production assertions
+  if (validatedConfig.NODE_ENV === Environment.Production) {
+    if (
+      !validatedConfig.SESSION_SECRET ||
+      validatedConfig.SESSION_SECRET.includes('default_insecure') ||
+      validatedConfig.SESSION_SECRET.length < 32
+    ) {
+      throw new Error(
+        'Production security violation: SESSION_SECRET must be explicitly set and >= 32 characters in production.',
+      );
+    }
+
+    if (
+      !validatedConfig.CSRF_SECRET ||
+      validatedConfig.CSRF_SECRET.includes('default_insecure') ||
+      validatedConfig.CSRF_SECRET.length < 32
+    ) {
+      throw new Error(
+        'Production security violation: CSRF_SECRET must be explicitly set and >= 32 characters in production.',
+      );
+    }
+
+    if (validatedConfig.CORS_ALLOWED_ORIGINS.includes('*')) {
+      throw new Error(
+        'Production security violation: Wildcard CORS origins are forbidden when credentials/cookies are enabled.',
+      );
+    }
   }
 
   return validatedConfig;

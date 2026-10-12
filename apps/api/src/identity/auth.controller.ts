@@ -1,27 +1,66 @@
-import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+  Req,
+  Res,
+} from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiBadRequestResponse,
   ApiConflictResponse,
+  ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
+  ApiCookieAuth,
 } from '@nestjs/swagger';
+import { Request, Response } from 'express';
+import { User } from '@prisma/client';
 import { IdentityService } from './identity.service';
+import { SessionService } from './session.service';
+import { CsrfService } from './csrf.service';
+import { RateLimiterService } from './rate-limiter.service';
 import { RegisterCustomerDto } from './dto/register-customer.dto';
+import { LoginDto } from './dto/login.dto';
 import { PublicUserResponseDto } from './dto/public-user-response.dto';
+import { LogoutResponseDto, CsrfTokenResponseDto } from './dto/auth-responses.dto';
+import { SessionAuthGuard } from './guards/session-auth.guard';
+import { CsrfGuard } from './guards/csrf.guard';
+import { CurrentUser } from './decorators/current-user.decorator';
+import { ConfigService } from '@nestjs/config';
+import {
+  getSessionCookieName,
+  getSessionCookieOptions,
+  getCsrfCookieName,
+  getCsrfCookieOptions,
+  getClearSessionCookieOptions,
+  getClearCsrfCookieOptions,
+} from './cookie.config';
 
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly identityService: IdentityService) {}
+  constructor(
+    private readonly identityService: IdentityService,
+    private readonly sessionService: SessionService,
+    private readonly csrfService: CsrfService,
+    private readonly rateLimiterService: RateLimiterService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(CsrfGuard)
   @ApiOperation({
     summary: 'Register a new customer account',
     description:
-      'Creates a new customer identity record with Argon2id password hash. IMPORTANT: Registration does NOT establish an authenticated session.',
+      'Creates a new customer identity record with Argon2id password hash. Does NOT establish a session.',
   })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -37,7 +76,196 @@ export class AuthController {
   @ApiInternalServerErrorResponse({
     description: 'Sanitized internal server error',
   })
-  async register(@Body() registerDto: RegisterCustomerDto): Promise<PublicUserResponseDto> {
-    return this.identityService.registerCustomer(registerDto);
+  async register(
+    @Body() registerDto: RegisterCustomerDto,
+    @Req() req: Request,
+  ): Promise<PublicUserResponseDto> {
+    const clientIp = this.rateLimiterService.extractClientIp(req);
+    return this.identityService.registerCustomer(registerDto, clientIp);
+  }
+
+  @Post('login')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(CsrfGuard)
+  @ApiOperation({
+    summary: 'Authenticate credentials and establish a secure session',
+    description:
+      'Authenticates email and password, creates a persistent server-side session, and sets secure HttpOnly session and CSRF cookies.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Authentication successful; session established',
+    type: PublicUserResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Input validation failure or malformed payload',
+  })
+  @ApiUnauthorizedResponse({
+    description:
+      'Generic authentication failure (invalid email, wrong password, or inactive account)',
+  })
+  @ApiForbiddenResponse({
+    description: 'Cross-site origin policy violation',
+  })
+  async login(
+    @Body() loginDto: LoginDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<PublicUserResponseDto> {
+    const clientIp = this.rateLimiterService.extractClientIp(req);
+    const userAgent = req.headers['user-agent'] as string | undefined;
+
+    const { user, session, rawToken } = await this.identityService.authenticateCustomer(
+      loginDto,
+      clientIp,
+      userAgent,
+    );
+
+    // Set secure HttpOnly session cookie
+    const sessionCookieName = getSessionCookieName(this.configService);
+    const sessionCookieOpts = getSessionCookieOptions(this.configService);
+    res.cookie(sessionCookieName, rawToken, sessionCookieOpts);
+
+    // Issue session-bound CSRF token and set readable CSRF cookie
+    const csrfToken = this.csrfService.generateToken(session.id);
+    const csrfCookieName = getCsrfCookieName(this.configService);
+    const csrfCookieOpts = getCsrfCookieOptions(this.configService);
+    res.cookie(csrfCookieName, csrfToken, csrfCookieOpts);
+    res.setHeader('X-CSRF-Token', csrfToken);
+
+    return PublicUserResponseDto.fromEntity(user);
+  }
+
+  @Get('me')
+  @UseGuards(SessionAuthGuard)
+  @ApiCookieAuth()
+  @ApiOperation({
+    summary: 'Get current authenticated user profile',
+    description: 'Validates active server-side session cookie and returns public user profile.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Current authenticated user profile',
+    type: PublicUserResponseDto,
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Missing, expired, revoked, or invalid session',
+  })
+  async me(@CurrentUser() user: User): Promise<PublicUserResponseDto> {
+    return PublicUserResponseDto.fromEntity(user);
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(SessionAuthGuard, CsrfGuard)
+  @ApiCookieAuth()
+  @ApiOperation({
+    summary: 'Terminate the current session',
+    description: 'Revokes the active session in PostgreSQL and clears authentication cookies.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Session revoked successfully',
+    type: LogoutResponseDto,
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid session',
+  })
+  @ApiForbiddenResponse({
+    description: 'Missing or invalid anti-CSRF token',
+  })
+  async logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<LogoutResponseDto> {
+    const rawToken = (req as unknown as { rawSessionToken?: string }).rawSessionToken;
+    if (rawToken) {
+      await this.sessionService.revokeSession(rawToken);
+    }
+
+    const sessionCookieName = getSessionCookieName(this.configService);
+    const csrfCookieName = getCsrfCookieName(this.configService);
+    res.clearCookie(sessionCookieName, getClearSessionCookieOptions(this.configService));
+    res.clearCookie(csrfCookieName, getClearCsrfCookieOptions(this.configService));
+
+    return {
+      success: true,
+      message: 'Logged out successfully',
+    };
+  }
+
+  @Post('logout-all')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(SessionAuthGuard, CsrfGuard)
+  @ApiCookieAuth()
+  @ApiOperation({
+    summary: 'Terminate all active sessions for the current user',
+    description:
+      'Revokes all active sessions for this account across all devices and clears cookies.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'All active sessions revoked successfully',
+    type: LogoutResponseDto,
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid session',
+  })
+  @ApiForbiddenResponse({
+    description: 'Missing or invalid anti-CSRF token',
+  })
+  async logoutAll(
+    @CurrentUser() user: User,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<LogoutResponseDto> {
+    const count = await this.sessionService.revokeAllUserSessions(user.id);
+
+    const sessionCookieName = getSessionCookieName(this.configService);
+    const csrfCookieName = getCsrfCookieName(this.configService);
+    res.clearCookie(sessionCookieName, getClearSessionCookieOptions(this.configService));
+    res.clearCookie(csrfCookieName, getClearCsrfCookieOptions(this.configService));
+
+    return {
+      success: true,
+      message: `All active sessions revoked successfully (${count} terminated)`,
+    };
+  }
+
+  @Get('csrf')
+  @ApiOperation({
+    summary: 'Obtain an anti-CSRF token',
+    description:
+      'Provides a double-submit anti-CSRF token and sets the aurel_csrf cookie for single-page applications.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'CSRF token issued successfully',
+    type: CsrfTokenResponseDto,
+  })
+  async getCsrf(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<CsrfTokenResponseDto> {
+    const cookieName = getSessionCookieName(this.configService);
+    const token = req.cookies?.[cookieName];
+
+    let csrfToken: string;
+    if (token) {
+      const validated = await this.sessionService.validateSession(token);
+      if (validated) {
+        csrfToken = this.csrfService.generateToken(validated.session.id);
+      } else {
+        csrfToken = this.csrfService.generateAnonymousToken();
+      }
+    } else {
+      csrfToken = this.csrfService.generateAnonymousToken();
+    }
+
+    const csrfCookieName = getCsrfCookieName(this.configService);
+    const csrfCookieOpts = getCsrfCookieOptions(this.configService);
+    res.cookie(csrfCookieName, csrfToken, csrfCookieOpts);
+    res.setHeader('X-CSRF-Token', csrfToken);
+
+    return { csrfToken };
   }
 }
