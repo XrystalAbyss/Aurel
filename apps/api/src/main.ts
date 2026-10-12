@@ -6,6 +6,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser = require('cookie-parser');
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
+import { configureTrustProxy } from './config/proxy.config';
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
@@ -21,9 +22,8 @@ async function bootstrap(): Promise<void> {
     .map((origin) => origin.trim())
     .filter(Boolean);
 
-  if (trustProxy) {
-    app.getHttpAdapter().getInstance().set('trust proxy', 1);
-  }
+  // Configure Express reverse proxy trust policy
+  configureTrustProxy(app, trustProxy);
 
   // Cookie parsing middleware
   app.use(cookieParser());

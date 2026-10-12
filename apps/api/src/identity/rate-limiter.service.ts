@@ -1,6 +1,7 @@
 import { Injectable, HttpException, HttpStatus, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, hkdfSync } from 'crypto';
+import { isIP } from 'net';
 import { Request } from 'express';
 import { ErrorCode } from '@aurel/shared-types';
 
@@ -125,18 +126,59 @@ export class RateLimiterService implements OnModuleDestroy {
   }
 
   /**
-   * Securely extracts client IP.
-   * If TRUST_PROXY is false, X-Forwarded-For is completely ignored to prevent IP spoofing attacks.
+   * Returns whether reverse proxy trust is enabled in configuration.
+   */
+  isTrustProxyEnabled(): boolean {
+    return this.trustProxy;
+  }
+
+  /**
+   * Securely extracts and validates the client IP address from the HTTP request.
+   *
+   * Security Invariants:
+   * 1. Relies authoritatively on Express's `req.ip`, which evaluates the request
+   *    in accordance with the configured `trust proxy` boundary (disabled by default).
+   * 2. NEVER parses client-supplied `X-Forwarded-For` headers manually, preventing attackers
+   *    from spoofing their rate-limiting identity by injecting arbitrary leftmost IPs.
+   * 3. Validates that the resolved IP address is a syntactically valid IPv4 or IPv6 address.
+   * 4. Normalizes IPv4-mapped IPv6 addresses (e.g., '::ffff:192.0.2.1' -> '192.0.2.1').
+   * 5. Falls back safely to socket remote address or '127.0.0.1' if `req.ip` is undefined or malformed.
+   * 6. Strictly ensures rate-limit keys are bounded, sanitized, and cannot contain arbitrary strings.
    */
   extractClientIp(req: Request): string {
-    if (this.trustProxy) {
-      const forwarded = req.headers['x-forwarded-for'];
-      if (typeof forwarded === 'string' && forwarded.trim()) {
-        const clientIp = forwarded.split(',')[0].trim();
-        if (clientIp) return clientIp;
+    let candidate = req.ip || req.socket?.remoteAddress;
+
+    if (!candidate || typeof candidate !== 'string') {
+      return '127.0.0.1';
+    }
+
+    candidate = candidate.trim();
+
+    // Normalize IPv4-mapped IPv6 addresses (e.g., '::ffff:192.0.2.1' -> '192.0.2.1')
+    if (candidate.startsWith('::ffff:')) {
+      const ipv4Part = candidate.substring(7);
+      if (isIP(ipv4Part) === 4) {
+        candidate = ipv4Part;
       }
     }
-    return req.ip || req.socket?.remoteAddress || '127.0.0.1';
+
+    // Validate that candidate is a valid IPv4 (4) or IPv6 (6) address
+    if (isIP(candidate) !== 0) {
+      return candidate;
+    }
+
+    // If candidate fails IP syntax validation, fallback safely to socket address if valid
+    const socketAddress = req.socket?.remoteAddress?.trim();
+    if (socketAddress) {
+      const normalizedSocket = socketAddress.startsWith('::ffff:')
+        ? socketAddress.substring(7)
+        : socketAddress;
+      if (isIP(normalizedSocket) !== 0) {
+        return normalizedSocket;
+      }
+    }
+
+    return '127.0.0.1';
   }
 
   /**

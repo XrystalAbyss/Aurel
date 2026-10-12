@@ -10,6 +10,8 @@ import { PasswordService } from '../src/identity/password.service';
 import { RateLimiterService } from '../src/identity/rate-limiter.service';
 import { SessionService } from '../src/identity/session.service';
 import { SESSION_COOKIE_NAME_DEV, CSRF_COOKIE_NAME } from '../src/identity/cookie.config';
+import { configureTrustProxy } from '../src/config/proxy.config';
+import { validateEnvironment } from '../src/config/env.validation';
 
 describe('Aurel P2.2 — Secure Authentication & Session Lifecycle E2E Tests', () => {
   let app: INestApplication;
@@ -38,6 +40,9 @@ describe('Aurel P2.2 — Secure Authentication & Session Lifecycle E2E Tests', (
       }),
     );
     app.useGlobalFilters(new GlobalExceptionFilter());
+
+    // Explicitly configure baseline proxy trust boundary (disabled by default)
+    configureTrustProxy(app, false);
 
     await app.init();
 
@@ -1166,6 +1171,193 @@ describe('Aurel P2.2 — Secure Authentication & Session Lifecycle E2E Tests', (
       expect(meRes.body.token).toBeUndefined();
       expect(loginRes.body.sessionToken).toBeUndefined();
       expect(meRes.body.sessionToken).toBeUndefined();
+    });
+  });
+
+  describe('9. Gate P2.2.3 — Trusted Proxy Hardening & Client-IP Security Invariants', () => {
+    let proxyApp: INestApplication;
+    let proxyRateLimiter: RateLimiterService;
+
+    beforeAll(async () => {
+      const proxyFixture: TestingModule = await Test.createTestingModule({
+        imports: [AppModule],
+      }).compile();
+
+      proxyApp = proxyFixture.createNestApplication();
+      proxyApp.setGlobalPrefix('api/v1');
+      proxyApp.use(cookieParser());
+      proxyApp.useGlobalPipes(
+        new ValidationPipe({
+          whitelist: true,
+          transform: true,
+          forbidNonWhitelisted: true,
+        }),
+      );
+      proxyApp.useGlobalFilters(new GlobalExceptionFilter());
+
+      // Explicitly configure 1-hop reverse proxy trust
+      configureTrustProxy(proxyApp, true);
+      await proxyApp.init();
+
+      proxyRateLimiter = proxyApp.get(RateLimiterService);
+    });
+
+    afterAll(async () => {
+      if (proxyApp) {
+        await proxyApp.close();
+      }
+    });
+
+    beforeEach(() => {
+      rateLimiter.clearAll();
+      rateLimiter.resetCustomLimits();
+      if (proxyRateLimiter) {
+        proxyRateLimiter.clearAll();
+        proxyRateLimiter.resetCustomLimits();
+      }
+    });
+
+    it('Scenario 1: Default app (TRUST_PROXY=false) ignores spoofed X-Forwarded-For and derives client IP from socket', async () => {
+      const { password, rawEmail } = await createTestUser();
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', '203.0.113.195')
+        .send({ email: rawEmail, password })
+        .expect(200);
+
+      expect(res.body.email).toBe(rawEmail.toLowerCase());
+    });
+
+    it('Scenario 2: Prevents rate-limit evasion via rotating X-Forwarded-For headers when TRUST_PROXY=false', async () => {
+      rateLimiter.setCustomLimit('LOGIN_IP', 3);
+      const { rawEmail } = await createTestUser();
+
+      // Attacker attempts 3 failed logins, sending different spoofed X-Forwarded-For on each attempt
+      for (let i = 1; i <= 3; i++) {
+        await request(app.getHttpServer())
+          .post('/api/v1/auth/login')
+          .set('X-Forwarded-For', `198.51.100.${i}`)
+          .send({ email: rawEmail, password: 'wrong_password' })
+          .expect(401);
+      }
+
+      // 4th attempt with yet another spoofed IP must STILL be rate-limited with HTTP 429
+      // because Express maps all requests to the true socket connection IP (127.0.0.1)
+      const blockedRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', '198.51.100.99')
+        .send({ email: rawEmail, password: 'wrong_password' })
+        .expect(429);
+
+      expect(blockedRes.body.code).toBe('TOO_MANY_REQUESTS');
+      expect(blockedRes.headers['retry-after']).toBeDefined();
+    });
+
+    it('Scenario 3: Trusted proxy app (trust proxy = 1) extracts client IP from 1-hop reverse proxy', async () => {
+      proxyRateLimiter.setCustomLimit('LOGIN_IP', 2);
+      const { rawEmail } = await createTestUser();
+
+      // Reverse proxy forwards real client IP 198.51.100.25
+      await request(proxyApp.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', '198.51.100.25')
+        .send({ email: rawEmail, password: 'wrong_password' })
+        .expect(401);
+
+      await request(proxyApp.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', '198.51.100.25')
+        .send({ email: rawEmail, password: 'wrong_password' })
+        .expect(401);
+
+      // 3rd attempt from same forwarded client IP is rate limited
+      const res = await request(proxyApp.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', '198.51.100.25')
+        .send({ email: rawEmail, password: 'wrong_password' })
+        .expect(429);
+
+      expect(res.body.code).toBe('TOO_MANY_REQUESTS');
+
+      // But a request from a different client IP through the proxy is permitted
+      await request(proxyApp.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', '198.51.100.77')
+        .send({ email: rawEmail, password: 'wrong_password' })
+        .expect(401);
+    });
+
+    it('Scenario 4: Trusted proxy app ignores spoofed leftmost IP in chained X-Forwarded-For (takes 1st trusted hop from right)', async () => {
+      proxyRateLimiter.setCustomLimit('LOGIN_IP', 2);
+      const { rawEmail } = await createTestUser();
+
+      // Attacker injected 1.1.1.1, reverse proxy appended 203.0.113.195
+      // Express with trust proxy = 1 evaluates the client IP as 203.0.113.195 (not 1.1.1.1)
+      await request(proxyApp.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', '1.1.1.1, 203.0.113.195')
+        .send({ email: rawEmail, password: 'wrong_password' })
+        .expect(401);
+
+      await request(proxyApp.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', '2.2.2.2, 203.0.113.195')
+        .send({ email: rawEmail, password: 'wrong_password' })
+        .expect(401);
+
+      // Changing the spoofed prefix (3.3.3.3) does NOT bypass throttling because client IP is 203.0.113.195
+      const res = await request(proxyApp.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', '3.3.3.3, 203.0.113.195')
+        .send({ email: rawEmail, password: 'wrong_password' })
+        .expect(429);
+
+      expect(res.body.code).toBe('TOO_MANY_REQUESTS');
+    });
+
+    it('Scenario 5: Handles malformed and special X-Forwarded-For values gracefully without crashing', async () => {
+      const { password, rawEmail } = await createTestUser();
+
+      const malformedHeaders = [
+        'not_an_ip_address',
+        '999.999.999.999',
+        '<script>alert(1)</script>',
+        '   ',
+        '127.0.0.1, , 10.0.0.1',
+      ];
+
+      for (const header of malformedHeaders) {
+        const res = await request(app.getHttpServer())
+          .post('/api/v1/auth/login')
+          .set('X-Forwarded-For', header)
+          .send({ email: rawEmail, password })
+          .expect(200);
+
+        expect(res.body.email).toBe(rawEmail.toLowerCase());
+      }
+    });
+
+    it('Scenario 6: Verifies literal TRUST_PROXY=false string parses to boolean false in environment validation', () => {
+      const config = {
+        DATABASE_URL: 'postgresql://postgres:password@localhost:5432/aurel_test',
+        TRUST_PROXY: 'false',
+      };
+      const parsed = validateEnvironment(config);
+      expect(parsed.TRUST_PROXY).toBe(false);
+      expect(typeof parsed.TRUST_PROXY).toBe('boolean');
+    });
+
+    it('Scenario 7: Rejects malformed TRUST_PROXY values, preventing silent proxy trust activation', () => {
+      const malformedValues = ['0', '1', 'yes', 'no', 'enabled', 'invalid'];
+      for (const val of malformedValues) {
+        expect(() =>
+          validateEnvironment({
+            DATABASE_URL: 'postgresql://postgres:password@localhost:5432/aurel_test',
+            TRUST_PROXY: val,
+          }),
+        ).toThrow(/TRUST_PROXY must be an explicit boolean/);
+      }
     });
   });
 });

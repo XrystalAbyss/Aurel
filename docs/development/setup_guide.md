@@ -125,3 +125,30 @@ If you suspect database credentials have been exposed:
    ```
 2. Update `apps/api/.env` with the rotated `<NEW_STRONG_PASSWORD>`.
 3. Verify connectivity with `pnpm test:e2e`.
+
+---
+
+## 6. Reverse Proxy Trust & Client-IP Security Architecture
+
+Aurel enforces strict client-IP resolution to ensure rate limiting cannot be evaded by malicious clients injecting fake forwarding headers:
+
+### Baseline Security Defaults (`TRUST_PROXY=false`)
+
+- **Default Behavior**: Proxy trust is disabled by default.
+- **Client IP Derivation**: Express derives `req.ip` directly from the TCP socket connection address (`req.socket.remoteAddress`).
+- **Header Isolation**: Client-supplied `X-Forwarded-*` headers are completely ignored.
+- **Local Development**: In development and automated test suites, all incoming requests resolve to the true connection IP (`127.0.0.1` or `::1`), ensuring that rotating `X-Forwarded-For` headers cannot bypass rate-limiting counters.
+
+### Production Reverse Proxy Deployment (`TRUST_PROXY=true`)
+
+When Aurel is deployed behind a dedicated front-facing reverse proxy (e.g., AWS ALB, Nginx, Cloudflare, Traefik):
+
+1. **Enable Proxy Trust**: Set `TRUST_PROXY=true` in the environment.
+2. **Framework Boundary**: Express is configured with `app.set('trust proxy', 1)`. Express evaluates the client IP from the 1st trusted reverse proxy hop from the right, preventing clients from prepending arbitrary leftmost IPs in the forwarding chain.
+3. **Mandatory Proxy Sanitization**: The front-facing reverse proxy **must** sanitize client-submitted `X-Forwarded-For` headers. For example, in Nginx:
+   ```nginx
+   # Nginx must replace or cleanly append the client connection address:
+   proxy_set_header X-Forwarded-For $remote_addr;
+   proxy_set_header X-Real-IP $remote_addr;
+   ```
+4. **Security Risk of Misconfiguration**: Setting `TRUST_PROXY=true` when the application is directly exposed to public traffic (without an intervening reverse proxy) allows attackers to freely select their rate-limiting identity, defeating IP-based brute-force defenses.

@@ -29,13 +29,11 @@ describe('RateLimiterService Unit Tests', () => {
     service.onModuleDestroy();
   });
 
-  describe('extractClientIp', () => {
-    it('ignores spoofed X-Forwarded-For header when TRUST_PROXY is false', () => {
+  describe('extractClientIp (Gate P2.2.3 Hardened IP Resolution)', () => {
+    it('extracts valid IPv4 address directly from Express req.ip', () => {
       const req = {
         ip: '192.168.1.100',
-        headers: {
-          'x-forwarded-for': '203.0.113.195, 70.41.3.18',
-        },
+        headers: { 'x-forwarded-for': '203.0.113.195, 70.41.3.18' },
         socket: { remoteAddress: '192.168.1.100' },
       } as unknown as Request;
 
@@ -43,7 +41,63 @@ describe('RateLimiterService Unit Tests', () => {
       expect(ip).toBe('192.168.1.100');
     });
 
-    it('respects X-Forwarded-For header when TRUST_PROXY is configured true', () => {
+    it('extracts valid IPv6 address directly from Express req.ip', () => {
+      const req = {
+        ip: '2001:0db8:85a3:0000:0000:8a2e:0370:7334',
+        headers: {},
+        socket: { remoteAddress: '::1' },
+      } as unknown as Request;
+
+      const ip = service.extractClientIp(req);
+      expect(ip).toBe('2001:0db8:85a3:0000:0000:8a2e:0370:7334');
+    });
+
+    it('normalizes IPv4-mapped IPv6 address from req.ip (::ffff:192.0.2.1 -> 192.0.2.1)', () => {
+      const req = {
+        ip: '::ffff:192.0.2.1',
+        headers: {},
+        socket: { remoteAddress: '::ffff:127.0.0.1' },
+      } as unknown as Request;
+
+      const ip = service.extractClientIp(req);
+      expect(ip).toBe('192.0.2.1');
+    });
+
+    it('falls back to socket remoteAddress when req.ip is undefined', () => {
+      const req = {
+        headers: { 'x-forwarded-for': '203.0.113.1' },
+        socket: { remoteAddress: '10.0.0.5' },
+      } as unknown as Request;
+
+      const ip = service.extractClientIp(req);
+      expect(ip).toBe('10.0.0.5');
+    });
+
+    it('falls back to socket remoteAddress when req.ip contains a malformed non-IP string', () => {
+      const req = {
+        ip: 'attacker_injected_string_or_domain.com',
+        headers: {},
+        socket: { remoteAddress: '198.51.100.10' },
+      } as unknown as Request;
+
+      const ip = service.extractClientIp(req);
+      expect(ip).toBe('198.51.100.10');
+    });
+
+    it('falls back safely to 127.0.0.1 when both req.ip and socket address are missing or malformed', () => {
+      const req = {
+        ip: 'invalid_ip',
+        headers: {},
+        socket: { remoteAddress: 'also_invalid' },
+      } as unknown as Request;
+
+      const ip = service.extractClientIp(req);
+      expect(ip).toBe('127.0.0.1');
+    });
+
+    it('never reads X-Forwarded-For header directly, preventing attacker spoofing regardless of proxy config', () => {
+      // Even if TRUST_PROXY is true in config, RateLimiterService relies on Express's req.ip
+      // rather than manually parsing the header
       (mockConfigService.get as jest.Mock).mockImplementation((key: string) => {
         if (key === 'TRUST_PROXY') return true;
         return 'test_secret_for_rate_limiter_min_32_chars';
@@ -51,14 +105,16 @@ describe('RateLimiterService Unit Tests', () => {
       const proxyService = new RateLimiterService(mockConfigService);
 
       const req = {
-        ip: '10.0.0.1',
+        ip: '10.0.0.1', // Value determined by Express
         headers: {
-          'x-forwarded-for': '203.0.113.195, 10.0.0.1',
+          'x-forwarded-for': 'attacker_spoofed_ip, 10.0.0.1',
         },
+        socket: { remoteAddress: '10.0.0.1' },
       } as unknown as Request;
 
       const ip = proxyService.extractClientIp(req);
-      expect(ip).toBe('203.0.113.195');
+      expect(ip).toBe('10.0.0.1');
+      expect(proxyService.isTrustProxyEnabled()).toBe(true);
       proxyService.onModuleDestroy();
     });
   });
