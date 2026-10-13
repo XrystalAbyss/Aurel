@@ -350,13 +350,13 @@ describe('Aurel Commerce & Orders End-to-End Tests', () => {
     });
 
     it('allows anonymous browser checkout with bootstrapped valid CSRF token and cookie (HTTP 201)', async () => {
-      const csrfBootstrap = await request(app.getHttpServer())
-        .get('/api/v1/auth/csrf')
-        .expect(200);
+      const csrfBootstrap = await request(app.getHttpServer()).get('/api/v1/auth/csrf').expect(200);
 
       const csrfToken = csrfBootstrap.body.csrfToken;
       const rawCookies = csrfBootstrap.headers['set-cookie'] as unknown as string[];
-      const csrfCookie = rawCookies.find((c: string) => c.startsWith(`${CSRF_COOKIE_NAME}=`))?.split(';')[0];
+      const csrfCookie = rawCookies
+        .find((c: string) => c.startsWith(`${CSRF_COOKIE_NAME}=`))
+        ?.split(';')[0];
 
       const orderPayload = {
         idempotencyKey: `e2e-csrf-success-${Date.now()}`,
@@ -464,7 +464,10 @@ describe('Aurel Commerce & Orders End-to-End Tests', () => {
         .patch(`/api/v1/orders/${orderId}/status`)
         .set('Origin', 'http://localhost:5174')
         .set('Cookie', staffCreds.cookieHeader)
-        .set('X-CSRF-Token', 'tampered-csrf-token.1234567890abcdef1234567890abcdef.1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef')
+        .set(
+          'X-CSRF-Token',
+          'tampered-csrf-token.1234567890abcdef1234567890abcdef.1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+        )
         .send({ status: OrderStatus.ACCEPTED })
         .expect(403);
 
