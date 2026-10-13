@@ -22,13 +22,16 @@ import {
 } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { User } from '@prisma/client';
+import { UserRole } from '@aurel/shared-types';
 import { IdentityService } from './identity.service';
 import { SessionService } from './session.service';
 import { CsrfService } from './csrf.service';
 import { RateLimiterService } from './rate-limiter.service';
 import { RegisterCustomerDto } from './dto/register-customer.dto';
 import { LoginDto } from './dto/login.dto';
+import { SetupPasswordDto } from './dto/setup-password.dto';
 import { PublicUserResponseDto } from './dto/public-user-response.dto';
+import { StaffUserResponseDto } from '../staff/dto/staff-user-response.dto';
 import { LogoutResponseDto, CsrfTokenResponseDto } from './dto/auth-responses.dto';
 import { SessionAuthGuard } from './guards/session-auth.guard';
 import { CsrfGuard } from './guards/csrf.guard';
@@ -136,6 +139,76 @@ export class AuthController {
     return PublicUserResponseDto.fromEntity(user);
   }
 
+  @Post('operations-login')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(CsrfGuard)
+  @ApiOperation({
+    summary: 'Authenticate restaurant employee credentials for Operations workspace',
+    description:
+      'Authenticates staff credentials and establishes a session. Customers are strictly rejected with HTTP 403 before any session is created.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Operations authentication successful',
+    type: StaffUserResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Validation failure' })
+  @ApiUnauthorizedResponse({ description: 'Invalid credentials or inactive account' })
+  @ApiForbiddenResponse({
+    description: 'Customer accounts not permitted in operations workspace',
+  })
+  async operationsLogin(
+    @Body() loginDto: LoginDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StaffUserResponseDto> {
+    const clientIp = this.rateLimiterService.extractClientIp(req);
+    const userAgent = req.headers['user-agent'] as string | undefined;
+
+    // Gate F: Strictly enforce allowed roles prior to session issuance
+    const { user, session, rawToken } = await this.identityService.authenticateCustomer(
+      loginDto,
+      clientIp,
+      userAgent,
+      [UserRole.STAFF, UserRole.KITCHEN, UserRole.MANAGER, UserRole.ADMIN],
+    );
+
+    // Set secure HttpOnly session cookie
+    const sessionCookieName = getSessionCookieName(this.configService);
+    const sessionCookieOpts = getSessionCookieOptions(this.configService);
+    res.cookie(sessionCookieName, rawToken, sessionCookieOpts);
+
+    // Issue session-bound CSRF token and set readable CSRF cookie
+    const csrfToken = this.csrfService.generateToken(session.id);
+    const csrfCookieName = getCsrfCookieName(this.configService);
+    const csrfCookieOpts = getCsrfCookieOptions(this.configService);
+    res.cookie(csrfCookieName, csrfToken, csrfCookieOpts);
+    res.setHeader('X-CSRF-Token', csrfToken);
+
+    return StaffUserResponseDto.fromEntity(user);
+  }
+
+  @Post('setup-password')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(CsrfGuard)
+  @ApiOperation({
+    summary: 'Establish permanent password for newly provisioned staff account',
+    description: 'Consumes single-use expiring setup token and sets initial employee password.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Password established successfully',
+  })
+  @ApiBadRequestResponse({ description: 'Invalid input or malformed payload' })
+  @ApiUnauthorizedResponse({ description: 'Invalid, expired, or replayed setup token' })
+  async setupPassword(
+    @Body() dto: SetupPasswordDto,
+    @Req() req: Request,
+  ): Promise<{ success: boolean; message: string }> {
+    const clientIp = this.rateLimiterService.extractClientIp(req);
+    return this.identityService.setupPassword(dto, clientIp);
+  }
+
   @Get('me')
   @UseGuards(SessionAuthGuard)
   @ApiCookieAuth()
@@ -151,7 +224,10 @@ export class AuthController {
   @ApiUnauthorizedResponse({
     description: 'Missing, expired, revoked, or invalid session',
   })
-  async me(@CurrentUser() user: User): Promise<PublicUserResponseDto> {
+  async me(@CurrentUser() user: User): Promise<PublicUserResponseDto | StaffUserResponseDto> {
+    if (user.role !== UserRole.CUSTOMER) {
+      return StaffUserResponseDto.fromEntity(user);
+    }
     return PublicUserResponseDto.fromEntity(user);
   }
 

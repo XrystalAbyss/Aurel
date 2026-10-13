@@ -9,6 +9,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
+    "seed:admin": "node dist/src/scripts/seed-admin.js",
+    "seed:staff": "node dist/src/scripts/seed-demo-staff.js",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",

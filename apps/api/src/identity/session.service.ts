@@ -1,7 +1,7 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes, createHmac, hkdfSync } from 'crypto';
-import { AuthSession, User } from '@prisma/client';
+import { AuthSession, User, Prisma } from '@prisma/client';
 import { ErrorCode } from '@aurel/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { SESSION_TTL_MS } from './cookie.config';
@@ -196,12 +196,14 @@ export class SessionService {
 
   /**
    * Revokes all active sessions for a specific user ID across all browsers/devices.
+   * Supports an optional Prisma.TransactionClient to participate in external transactions.
    * Safe to call concurrently.
    */
-  async revokeAllUserSessions(userId: string): Promise<number> {
+  async revokeAllUserSessions(userId: string, tx?: Prisma.TransactionClient): Promise<number> {
+    const client = tx ?? this.prisma;
     const now = new Date();
 
-    const result = await this.prisma.authSession.updateMany({
+    const result = await client.authSession.updateMany({
       where: {
         userId,
         revokedAt: null,

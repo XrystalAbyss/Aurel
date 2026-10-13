@@ -7,7 +7,9 @@ import { SessionService } from './session.service';
 import { CsrfService } from './csrf.service';
 import { RateLimiterService } from './rate-limiter.service';
 import { SessionAuthGuard } from './guards/session-auth.guard';
+import { OptionalSessionAuthGuard } from './guards/optional-session-auth.guard';
 import { CsrfGuard } from './guards/csrf.guard';
+import { PermissionsGuard } from './guards/permissions.guard';
 import { AuthController } from './auth.controller';
 
 @Module({
@@ -21,7 +23,9 @@ import { AuthController } from './auth.controller';
     CsrfService,
     RateLimiterService,
     SessionAuthGuard,
+    OptionalSessionAuthGuard,
     CsrfGuard,
+    PermissionsGuard,
   ],
   exports: [
     IdentityService,
@@ -31,7 +35,9 @@ import { AuthController } from './auth.controller';
     CsrfService,
     RateLimiterService,
     SessionAuthGuard,
+    OptionalSessionAuthGuard,
     CsrfGuard,
+    PermissionsGuard,
   ],
 })
 export class IdentityModule {}

@@ -15,9 +15,12 @@
     "typecheck": "pnpm --filter @aurel/shared-types typecheck && pnpm --filter @aurel/api typecheck && pnpm --filter @aurel/storefront typecheck && pnpm --filter @aurel/operations typecheck",
     "test": "pnpm --filter @aurel/api test",
     "test:e2e": "pnpm --filter @aurel/api test:e2e",
+    "db": "pnpm --filter @aurel/api prisma migrate deploy && pnpm --filter @aurel/api prisma generate",
     "db:generate": "pnpm --filter @aurel/api db:generate",
     "db:migrate": "pnpm --filter @aurel/api db:migrate",
     "db:migrate:deploy": "pnpm --filter @aurel/api db:migrate:deploy",
+    "seed:admin": "pnpm --filter @aurel/api seed:admin",
+    "seed:staff": "pnpm --filter @aurel/api seed:staff",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\""

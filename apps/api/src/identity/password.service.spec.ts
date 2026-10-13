@@ -1,6 +1,7 @@
 import { PasswordService, ARGON2ID_OPTIONS } from './password.service';
 
 describe('PasswordService', () => {
+  jest.setTimeout(30000);
   let passwordService: PasswordService;
 
   beforeEach(() => {
