@@ -344,15 +344,17 @@ export default function App(): React.JSX.Element {
   // Login Screen
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-[#090D16] text-[#F8FAFC] flex flex-col justify-center items-center p-6 font-sans">
-        <div className="max-w-md w-full bg-[#111827] border border-[#1E293B] rounded-2xl p-8 shadow-2xl">
+      <div className="min-h-screen bg-[#090D16] text-[#F8FAFC] flex flex-col justify-center items-center p-3 sm:p-6 font-sans overflow-x-hidden">
+        <div className="w-full max-w-[340px] sm:max-w-md bg-[#111827] border border-[#1E293B] rounded-2xl p-4 sm:p-8 shadow-2xl">
           {/* Brand */}
           <div className="text-center mb-6">
             <div className="w-12 h-12 bg-ops-accent/10 border border-ops-accent/30 rounded-xl flex items-center justify-center mx-auto mb-3">
               <span className="text-ops-accent font-bold text-xl font-mono">AO</span>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">Aurel Operations</h1>
-            <p className="text-xs text-ops-muted mt-1 uppercase tracking-widest">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
+              Aurel Operations
+            </h1>
+            <p className="text-[10px] sm:text-xs text-ops-muted mt-1 uppercase tracking-widest">
               Kitchen Display & Floor Terminal
             </p>
           </div>
@@ -409,7 +411,7 @@ export default function App(): React.JSX.Element {
                   DEV ONLY
                 </span>
               </div>
-              <div className="grid grid-cols-3 gap-2 text-[11px]">
+              <div className="grid grid-cols-3 gap-1.5 sm:gap-2 text-[10px] sm:text-[11px]">
                 <button
                   type="button"
                   onClick={() => {
@@ -418,7 +420,7 @@ export default function App(): React.JSX.Element {
                       import.meta.env.VITE_DEMO_PASSWORD || 'OperationsPassword2026!',
                     );
                   }}
-                  className="p-2 rounded-lg bg-[#1E293B] border border-[#334155] hover:border-ops-accent text-center text-ops-muted hover:text-white transition-all"
+                  className="px-1.5 py-2 sm:p-2 rounded-lg bg-[#1E293B] border border-[#334155] hover:border-ops-accent text-center text-ops-muted hover:text-white transition-all whitespace-nowrap"
                 >
                   🤵 Staff
                 </button>
@@ -430,7 +432,7 @@ export default function App(): React.JSX.Element {
                       import.meta.env.VITE_DEMO_PASSWORD || 'OperationsPassword2026!',
                     );
                   }}
-                  className="p-2 rounded-lg bg-[#1E293B] border border-[#334155] hover:border-ops-accent text-center text-ops-muted hover:text-white transition-all"
+                  className="px-1.5 py-2 sm:p-2 rounded-lg bg-[#1E293B] border border-[#334155] hover:border-ops-accent text-center text-ops-muted hover:text-white transition-all whitespace-nowrap"
                 >
                   👨‍🍳 Kitchen
                 </button>
@@ -442,7 +444,7 @@ export default function App(): React.JSX.Element {
                       import.meta.env.VITE_DEMO_PASSWORD || 'OperationsPassword2026!',
                     );
                   }}
-                  className="p-2 rounded-lg bg-[#1E293B] border border-[#334155] hover:border-ops-accent text-center text-ops-muted hover:text-white transition-all"
+                  className="px-1.5 py-2 sm:p-2 rounded-lg bg-[#1E293B] border border-[#334155] hover:border-ops-accent text-center text-ops-muted hover:text-white transition-all whitespace-nowrap"
                 >
                   👑 Admin
                 </button>
