@@ -461,22 +461,22 @@ export default function App(): React.JSX.Element {
   };
 
   return (
-    <div className="min-h-screen bg-[#0D0D11] text-[#E8E6E3] flex flex-col font-sans selection:bg-[#C5A880]/30">
+    <div className="min-h-screen bg-[#0D0D11] text-[#E8E6E3] flex flex-col font-sans selection:bg-[#C5A880]/30 overflow-x-hidden">
       {/* Top Header */}
-      <header className="sticky top-0 z-40 bg-[#0D0D11]/90 backdrop-blur-md border-b border-[#23232C] px-6 lg:px-12 py-4 flex items-center justify-between">
+      <header className="sticky top-0 z-40 bg-[#0D0D11]/90 backdrop-blur-md border-b border-[#23232C] px-4 sm:px-6 lg:px-12 py-3.5 sm:py-4 flex items-center justify-between">
         {/* Brand */}
         <div
-          className="flex items-center space-x-3 cursor-pointer"
+          className="flex items-center space-x-2.5 sm:space-x-3 cursor-pointer"
           onClick={() => setActiveOrder(null)}
         >
-          <div className="w-10 h-10 rounded-full border border-[#C5A880] flex items-center justify-center bg-gradient-to-tr from-[#1A1813] to-[#2B2319]">
-            <span className="font-serif text-[#C5A880] font-bold text-xl">A</span>
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border border-[#C5A880] flex items-center justify-center bg-gradient-to-tr from-[#1A1813] to-[#2B2319]">
+            <span className="font-serif text-[#C5A880] font-bold text-lg sm:text-xl">A</span>
           </div>
           <div>
-            <h1 className="text-xl font-serif tracking-widest uppercase font-semibold text-[#F7F4EE]">
+            <h1 className="text-lg sm:text-xl font-serif tracking-widest uppercase font-semibold text-[#F7F4EE]">
               Aurel
             </h1>
-            <p className="text-[10px] tracking-[0.25em] uppercase text-[#C5A880]">
+            <p className="text-[9px] sm:text-[10px] tracking-[0.25em] uppercase text-[#C5A880] hidden xs:block sm:block">
               Haute Gastronomie
             </p>
           </div>
@@ -517,17 +517,18 @@ export default function App(): React.JSX.Element {
         </div>
 
         {/* Actions: Lookup & Cart */}
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2 sm:space-x-3">
           <button
             onClick={() => setIsLookupOpen(true)}
-            className="text-xs px-3 py-2 rounded-lg border border-[#2A2A35] text-[#C5A880] hover:bg-[#1A1A22] transition-colors"
+            className="text-xs px-2.5 sm:px-3 py-2 rounded-lg border border-[#2A2A35] text-[#C5A880] hover:bg-[#1A1A22] transition-colors whitespace-nowrap"
           >
-            🔍 Track Order
+            <span className="hidden sm:inline">🔍 Track Order</span>
+            <span className="sm:hidden">🔍 Track</span>
           </button>
 
           <button
             onClick={() => setIsCartOpen(true)}
-            className="relative px-4 py-2 rounded-lg bg-gradient-to-r from-[#C5A880] to-[#B39366] text-[#0D0D11] font-semibold text-xs flex items-center space-x-2 shadow-lg shadow-[#C5A880]/10 hover:brightness-105 transition-all"
+            className="relative px-3 sm:px-4 py-2 rounded-lg bg-gradient-to-r from-[#C5A880] to-[#B39366] text-[#0D0D11] font-semibold text-xs flex items-center space-x-1.5 sm:space-x-2 shadow-lg shadow-[#C5A880]/10 hover:brightness-105 transition-all whitespace-nowrap"
           >
             <span>Cart</span>
             {totalCartCount > 0 && (
@@ -541,7 +542,7 @@ export default function App(): React.JSX.Element {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-6 lg:px-12 py-8">
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-12 py-6 sm:py-8">
         {/* Active Order Banner if tracking an order */}
         {activeOrder && (
           <div className="mb-10 bg-gradient-to-r from-[#171612] via-[#211E16] to-[#171612] border border-[#C5A880]/40 rounded-2xl p-6 lg:p-8 shadow-2xl relative overflow-hidden">
@@ -654,21 +655,21 @@ export default function App(): React.JSX.Element {
         )}
 
         {/* Hero Section */}
-        <section className="text-center py-10 lg:py-16">
-          <span className="text-xs uppercase tracking-[0.3em] text-[#C5A880] font-semibold">
+        <section className="text-center py-8 sm:py-10 lg:py-16">
+          <span className="text-[11px] sm:text-xs uppercase tracking-[0.25em] sm:tracking-[0.3em] text-[#C5A880] font-semibold">
             Fine Dining & Table Hospitality
           </span>
-          <h2 className="text-4xl sm:text-6xl font-serif text-[#F7F4EE] mt-3 tracking-wide leading-tight">
+          <h2 className="text-2xl sm:text-5xl lg:text-6xl font-serif text-[#F7F4EE] mt-3 tracking-wide leading-tight">
             Crafted Flavors, Wood-Fired Mastery & Salon Dining
           </h2>
-          <p className="text-[#9E9BA3] max-w-2xl mx-auto mt-4 text-sm sm:text-base leading-relaxed">
+          <p className="text-[#9E9BA3] max-w-2xl mx-auto mt-4 text-xs sm:text-base leading-relaxed px-2">
             Welcome to Aurel. Our kitchen combines 48-hour fermented Neapolitan doughs, hand-rolled
             pastas, and prime Robata-charred cuts.
           </p>
 
           {/* Fulfillment details banner */}
-          <div className="mt-8 inline-flex items-center bg-[#15151B] border border-[#2A2A35] rounded-full px-5 py-2 text-xs text-[#9E9BA3]">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 mr-2.5 animate-pulse"></span>
+          <div className="mt-6 sm:mt-8 inline-flex flex-wrap items-center justify-center max-w-full bg-[#15151B] border border-[#2A2A35] rounded-full px-4 sm:px-5 py-1.5 sm:py-2 text-[11px] sm:text-xs text-[#9E9BA3]">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 mr-2.5 animate-pulse shrink-0"></span>
             <span>Current Dining Mode:</span>
             <strong className="text-[#F7F4EE] ml-1.5 uppercase tracking-wide">
               {fulfillmentChannel === FulfillmentChannel.DINE_IN && '🍽️ Dine-In Table Service'}
@@ -679,10 +680,10 @@ export default function App(): React.JSX.Element {
         </section>
 
         {/* Category Filter Tabs */}
-        <div className="flex items-center space-x-2 overflow-x-auto pb-4 scrollbar-none border-b border-[#202028] mb-8">
+        <div className="flex items-center space-x-2 overflow-x-auto pb-4 scrollbar-none border-b border-[#202028] mb-8 w-full max-w-full min-w-0">
           <button
             onClick={() => setActiveCategoryId('all')}
-            className={`px-5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
+            className={`px-4 sm:px-5 py-1.5 sm:py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
               activeCategoryId === 'all'
                 ? 'bg-[#C5A880] text-[#0D0D11] font-semibold shadow-md'
                 : 'bg-[#15151B] text-[#9E9BA3] hover:text-[#E8E6E3] hover:bg-[#1E1E26]'
@@ -694,7 +695,7 @@ export default function App(): React.JSX.Element {
             <button
               key={cat.id}
               onClick={() => setActiveCategoryId(cat.id)}
-              className={`px-5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
+              className={`px-4 sm:px-5 py-1.5 sm:py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
                 activeCategoryId === cat.id
                   ? 'bg-[#C5A880] text-[#0D0D11] font-semibold shadow-md'
                   : 'bg-[#15151B] text-[#9E9BA3] hover:text-[#E8E6E3] hover:bg-[#1E1E26]'

@@ -99,15 +99,11 @@ pnpm build
 
 ---
 
-## 5. Development Roadmap
+## 5. Academic Project & Demonstration Handoff
 
-- **P1:** Engineering Foundation (Monorepo, NestJS 11, PostgreSQL 16, Prisma 7, Dual React SPAs, CI) — _Current_
-- **P2:** Identity, Sessions, Permissions and Catalog
-- **P3:** Pricing and Checkout
-- **P4:** Fulfillment, Tables and Real-Time Operations
-- **P5:** Customer Storefront Experience
-- **P6:** Restaurant Operations Workspace
-- **P7:** Hardening, Deployment and Release Acceptance
+- **Project Title:** _Aurel — An Integrated Restaurant Ordering and Operations Management System_
+- **Complete Academic Handoff Guide:** [`docs/demonstration/academic_project_handoff.md`](docs/demonstration/academic_project_handoff.md)
+- **Verified MVP Status:** Full restaurant-commerce lifecycle verified with 193 unit tests, 129 PostgreSQL-backed E2E tests, 7 database migrations, and production builds across all 4 workspaces.
 
 ---
 
