@@ -29,6 +29,7 @@ import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { QueryOrdersDto } from './dto/query-orders.dto';
 import { SessionAuthGuard } from '../identity/guards/session-auth.guard';
 import { OptionalSessionAuthGuard } from '../identity/guards/optional-session-auth.guard';
+import { CsrfGuard } from '../identity/guards/csrf.guard';
 import { PermissionsGuard } from '../identity/guards/permissions.guard';
 import { Permissions } from '../identity/decorators/permissions.decorator';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
@@ -41,7 +42,7 @@ export class OrdersController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @UseGuards(OptionalSessionAuthGuard)
+  @UseGuards(OptionalSessionAuthGuard, CsrfGuard)
   @ApiOperation({
     summary: 'Submit a new restaurant order',
     description:
@@ -101,7 +102,7 @@ export class OrdersController {
 
   @Patch(':id/status')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(SessionAuthGuard)
+  @UseGuards(SessionAuthGuard, CsrfGuard)
   @ApiCookieAuth()
   @ApiOperation({
     summary: 'Transition order through fulfillment state machine',

@@ -21,6 +21,7 @@ import {
 import { CatalogService } from './catalog.service';
 import { ToggleAvailabilityDto } from './dto/toggle-availability.dto';
 import { SessionAuthGuard } from '../identity/guards/session-auth.guard';
+import { CsrfGuard } from '../identity/guards/csrf.guard';
 import { PermissionsGuard } from '../identity/guards/permissions.guard';
 import { Permissions } from '../identity/decorators/permissions.decorator';
 import { Permission, MenuCategory, MenuItemSummary } from '@aurel/shared-types';
@@ -61,7 +62,7 @@ export class CatalogController {
 
   @Patch('items/:id/availability')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(SessionAuthGuard, PermissionsGuard)
+  @UseGuards(SessionAuthGuard, CsrfGuard, PermissionsGuard)
   @Permissions(Permission.CATALOG_WRITE)
   @ApiCookieAuth()
   @ApiOperation({

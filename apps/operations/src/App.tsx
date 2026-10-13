@@ -30,6 +30,23 @@ export default function App(): React.JSX.Element {
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Anti-CSRF Token Management
+  const [csrfToken, setCsrfToken] = useState<string | null>(null);
+
+  const fetchCsrfToken = useCallback(async (): Promise<string | null> => {
+    try {
+      const res = await fetch(`${apiBase}/auth/csrf`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setCsrfToken(data.csrfToken);
+        return data.csrfToken;
+      }
+    } catch (err) {
+      console.debug('Failed to fetch CSRF token:', err);
+    }
+    return null;
+  }, [apiBase]);
+
   // Menu 86 Management State
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [menuLoading, setMenuLoading] = useState<boolean>(false);
@@ -37,6 +54,7 @@ export default function App(): React.JSX.Element {
   // Check existing session on load
   const checkSession = useCallback(async () => {
     try {
+      await fetchCsrfToken();
       const res = await fetch(`${apiBase}/auth/me`, { credentials: 'include' });
       if (res.ok) {
         const user = await res.json();
@@ -49,7 +67,7 @@ export default function App(): React.JSX.Element {
     } finally {
       setAuthLoading(false);
     }
-  }, [apiBase]);
+  }, [apiBase, fetchCsrfToken]);
 
   useEffect(() => {
     checkSession();
@@ -113,15 +131,47 @@ export default function App(): React.JSX.Element {
     setLoginError(null);
 
     try {
-      const res = await fetch(`${apiBase}/auth/operations-login`, {
+      let activeCsrf = csrfToken;
+      if (!activeCsrf) {
+        activeCsrf = await fetchCsrfToken();
+      }
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (activeCsrf) {
+        headers['X-CSRF-Token'] = activeCsrf;
+      }
+
+      let res = await fetch(`${apiBase}/auth/operations-login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         credentials: 'include',
         body: JSON.stringify({
           email: loginEmail.trim().toLowerCase(),
           password: loginPassword,
         }),
       });
+
+      if (res.status === 403) {
+        const errJson = await res
+          .clone()
+          .json()
+          .catch(() => ({}));
+        if (errJson.code === 'CSRF_ERROR' || errJson.message?.includes('CSRF')) {
+          const freshCsrf = await fetchCsrfToken();
+          if (freshCsrf) {
+            headers['X-CSRF-Token'] = freshCsrf;
+            res = await fetch(`${apiBase}/auth/operations-login`, {
+              method: 'POST',
+              headers,
+              credentials: 'include',
+              body: JSON.stringify({
+                email: loginEmail.trim().toLowerCase(),
+                password: loginPassword,
+              }),
+            });
+          }
+        }
+      }
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -130,6 +180,7 @@ export default function App(): React.JSX.Element {
 
       const user: StaffUserResponse = await res.json();
       setCurrentUser(user);
+      await fetchCsrfToken();
       fetchOrders();
     } catch (err: any) {
       setLoginError(err.message || 'Authentication failed');
@@ -141,8 +192,11 @@ export default function App(): React.JSX.Element {
   // Handle Logout
   const handleLogout = async () => {
     try {
+      const headers: Record<string, string> = {};
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
       await fetch(`${apiBase}/auth/logout`, {
         method: 'POST',
+        headers,
         credentials: 'include',
       });
     } catch {
@@ -150,6 +204,7 @@ export default function App(): React.JSX.Element {
     } finally {
       setCurrentUser(null);
       setOrders([]);
+      await fetchCsrfToken();
     }
   };
 
@@ -157,12 +212,41 @@ export default function App(): React.JSX.Element {
   const handleUpdateStatus = async (orderId: string, targetStatus: OrderStatus) => {
     setActionError(null);
     try {
-      const res = await fetch(`${apiBase}/orders/${orderId}/status`, {
+      let activeCsrf = csrfToken;
+      if (!activeCsrf) {
+        activeCsrf = await fetchCsrfToken();
+      }
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (activeCsrf) {
+        headers['X-CSRF-Token'] = activeCsrf;
+      }
+
+      let res = await fetch(`${apiBase}/orders/${orderId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         credentials: 'include',
         body: JSON.stringify({ status: targetStatus }),
       });
+
+      if (res.status === 403) {
+        const errJson = await res
+          .clone()
+          .json()
+          .catch(() => ({}));
+        if (errJson.code === 'CSRF_ERROR' || errJson.message?.includes('CSRF')) {
+          const freshCsrf = await fetchCsrfToken();
+          if (freshCsrf) {
+            headers['X-CSRF-Token'] = freshCsrf;
+            res = await fetch(`${apiBase}/orders/${orderId}/status`, {
+              method: 'PATCH',
+              headers,
+              credentials: 'include',
+              body: JSON.stringify({ status: targetStatus }),
+            });
+          }
+        }
+      }
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
@@ -181,12 +265,41 @@ export default function App(): React.JSX.Element {
   // Toggle Item Availability
   const handleToggleAvailability = async (itemId: string, currentAvailable: boolean) => {
     try {
-      const res = await fetch(`${apiBase}/menu/items/${itemId}/availability`, {
+      let activeCsrf = csrfToken;
+      if (!activeCsrf) {
+        activeCsrf = await fetchCsrfToken();
+      }
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (activeCsrf) {
+        headers['X-CSRF-Token'] = activeCsrf;
+      }
+
+      let res = await fetch(`${apiBase}/menu/items/${itemId}/availability`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         credentials: 'include',
         body: JSON.stringify({ isAvailable: !currentAvailable }),
       });
+
+      if (res.status === 403) {
+        const errJson = await res
+          .clone()
+          .json()
+          .catch(() => ({}));
+        if (errJson.code === 'CSRF_ERROR' || errJson.message?.includes('CSRF')) {
+          const freshCsrf = await fetchCsrfToken();
+          if (freshCsrf) {
+            headers['X-CSRF-Token'] = freshCsrf;
+            res = await fetch(`${apiBase}/menu/items/${itemId}/availability`, {
+              method: 'PATCH',
+              headers,
+              credentials: 'include',
+              body: JSON.stringify({ isAvailable: !currentAvailable }),
+            });
+          }
+        }
+      }
 
       if (res.ok) {
         fetchMenu();

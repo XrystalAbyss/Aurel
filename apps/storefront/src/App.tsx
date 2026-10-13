@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   MenuCategory,
   MenuItemSummary,
@@ -68,6 +68,29 @@ export default function App(): React.JSX.Element {
   const [isLookupOpen, setIsLookupOpen] = useState<boolean>(false);
   const [lookupLoading, setLookupLoading] = useState<boolean>(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
+
+  // Anti-CSRF Token Management
+  const [csrfToken, setCsrfToken] = useState<string | null>(null);
+
+  const fetchCsrfToken = useCallback(async (): Promise<string | null> => {
+    try {
+      const res = await fetch(`${apiBase}/auth/csrf`, {
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCsrfToken(data.csrfToken);
+        return data.csrfToken;
+      }
+    } catch (e) {
+      console.debug('Failed to bootstrap CSRF token:', e);
+    }
+    return null;
+  }, [apiBase]);
+
+  useEffect(() => {
+    fetchCsrfToken();
+  }, [fetchCsrfToken]);
 
   // Fetch Menu on load
   const loadMenu = () => {
@@ -331,11 +354,44 @@ export default function App(): React.JSX.Element {
     };
 
     try {
-      const res = await fetch(`${apiBase}/orders`, {
+      let activeCsrf = csrfToken;
+      if (!activeCsrf) {
+        activeCsrf = await fetchCsrfToken();
+      }
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (activeCsrf) {
+        headers['X-CSRF-Token'] = activeCsrf;
+      }
+
+      let res = await fetch(`${apiBase}/orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
+
+      // Handle expired or invalid CSRF state gracefully with automatic retry
+      if (res.status === 403) {
+        const errJson = await res
+          .clone()
+          .json()
+          .catch(() => ({}));
+        if (errJson.code === 'CSRF_ERROR' || errJson.message?.includes('CSRF')) {
+          const freshCsrf = await fetchCsrfToken();
+          if (freshCsrf) {
+            headers['X-CSRF-Token'] = freshCsrf;
+            res = await fetch(`${apiBase}/orders`, {
+              method: 'POST',
+              headers,
+              credentials: 'include',
+              body: JSON.stringify(payload),
+            });
+          }
+        }
+      }
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));

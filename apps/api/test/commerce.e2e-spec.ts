@@ -321,6 +321,71 @@ describe('Aurel Commerce & Orders End-to-End Tests', () => {
 
       expect(['BAD_REQUEST', 'VALIDATION_FAILED']).toContain(res.body.code);
     });
+
+    it('rejects anonymous browser checkout carrying Origin header without required CSRF bootstrap (HTTP 403)', async () => {
+      const orderPayload = {
+        idempotencyKey: `e2e-csrf-fail-${Date.now()}`,
+        fulfillmentChannel: FulfillmentChannel.DINE_IN,
+        customerName: 'Browser Guest',
+        customerEmail: 'browser.guest@example.com',
+        customerPhone: '+919876543299',
+        tableNumber: 'Table 9',
+        paymentMode: PaymentMode.DEMO,
+        items: [
+          {
+            menuItemId: testItem.id,
+            quantity: 1,
+            selectedOptionIds: requiredOptionId ? [requiredOptionId] : [],
+          },
+        ],
+      };
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/orders')
+        .set('Origin', 'http://localhost:5173')
+        .send(orderPayload)
+        .expect(403);
+
+      expect(res.body.code).toBe('CSRF_ERROR');
+    });
+
+    it('allows anonymous browser checkout with bootstrapped valid CSRF token and cookie (HTTP 201)', async () => {
+      const csrfBootstrap = await request(app.getHttpServer())
+        .get('/api/v1/auth/csrf')
+        .expect(200);
+
+      const csrfToken = csrfBootstrap.body.csrfToken;
+      const rawCookies = csrfBootstrap.headers['set-cookie'] as unknown as string[];
+      const csrfCookie = rawCookies.find((c: string) => c.startsWith(`${CSRF_COOKIE_NAME}=`))?.split(';')[0];
+
+      const orderPayload = {
+        idempotencyKey: `e2e-csrf-success-${Date.now()}`,
+        fulfillmentChannel: FulfillmentChannel.DINE_IN,
+        customerName: 'Browser Guest With CSRF',
+        customerEmail: 'browser.csrf@example.com',
+        customerPhone: '+919876543299',
+        tableNumber: 'Table 9',
+        paymentMode: PaymentMode.DEMO,
+        items: [
+          {
+            menuItemId: testItem.id,
+            quantity: 1,
+            selectedOptionIds: requiredOptionId ? [requiredOptionId] : [],
+          },
+        ],
+      };
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/orders')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', csrfCookie || '')
+        .set('X-CSRF-Token', csrfToken)
+        .send(orderPayload)
+        .expect(201);
+
+      createdOrderIds.push(res.body.id);
+      expect(res.body.status).toBe(OrderStatus.PLACED);
+    });
   });
 
   describe('Operations Queue & Fulfillment Lifecycle State Machine', () => {
@@ -383,30 +448,81 @@ describe('Aurel Commerce & Orders End-to-End Tests', () => {
       expect(targetOrder.status).toBe(OrderStatus.PLACED);
     });
 
-    it('allows STAFF to advance order from PLACED to ACCEPTED', async () => {
+    it('rejects authenticated status mutation with cookie but without X-CSRF-Token header (HTTP 403 CSRF_ERROR)', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(`/api/v1/orders/${orderId}/status`)
+        .set('Origin', 'http://localhost:5174')
+        .set('Cookie', staffCreds.cookieHeader)
+        .send({ status: OrderStatus.ACCEPTED })
+        .expect(403);
+
+      expect(res.body.code).toBe('CSRF_ERROR');
+    });
+
+    it('rejects authenticated status mutation with tampered X-CSRF-Token header (HTTP 403 CSRF_ERROR)', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(`/api/v1/orders/${orderId}/status`)
+        .set('Origin', 'http://localhost:5174')
+        .set('Cookie', staffCreds.cookieHeader)
+        .set('X-CSRF-Token', 'tampered-csrf-token.1234567890abcdef1234567890abcdef.1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef')
+        .send({ status: OrderStatus.ACCEPTED })
+        .expect(403);
+
+      expect(res.body.code).toBe('CSRF_ERROR');
+    });
+
+    it('rejects authenticated status mutation from untrusted Origin (HTTP 403 FORBIDDEN)', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(`/api/v1/orders/${orderId}/status`)
+        .set('Origin', 'https://malicious-attacker.com')
+        .set('Cookie', staffCreds.cookieHeader)
+        .set('X-CSRF-Token', staffCreds.csrfToken)
+        .send({ status: OrderStatus.ACCEPTED })
+        .expect(403);
+
+      expect(res.body.code).toBe('FORBIDDEN');
+    });
+
+    it('rejects cookie-bearing status mutation missing Origin when CSRF token is missing (HTTP 403 CSRF_ERROR)', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/api/v1/orders/${orderId}/status`)
         .set('Cookie', staffCreds.cookieHeader)
+        .send({ status: OrderStatus.ACCEPTED })
+        .expect(403);
+
+      expect(res.body.code).toBe('CSRF_ERROR');
+    });
+
+    it('allows STAFF to advance order from PLACED to ACCEPTED with valid CSRF and trusted origin', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(`/api/v1/orders/${orderId}/status`)
+        .set('Origin', 'http://localhost:5174')
+        .set('Cookie', staffCreds.cookieHeader)
+        .set('X-CSRF-Token', staffCreds.csrfToken)
         .send({ status: OrderStatus.ACCEPTED })
         .expect(200);
 
       expect(res.body.status).toBe(OrderStatus.ACCEPTED);
     });
 
-    it('allows KITCHEN to advance order from ACCEPTED to PREPARING', async () => {
+    it('allows KITCHEN to advance order from ACCEPTED to PREPARING with valid CSRF and trusted origin', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/api/v1/orders/${orderId}/status`)
+        .set('Origin', 'http://localhost:5174')
         .set('Cookie', kitchenCreds.cookieHeader)
+        .set('X-CSRF-Token', kitchenCreds.csrfToken)
         .send({ status: OrderStatus.PREPARING })
         .expect(200);
 
       expect(res.body.status).toBe(OrderStatus.PREPARING);
     });
 
-    it('allows KITCHEN to advance order from PREPARING to READY', async () => {
+    it('allows KITCHEN to advance order from PREPARING to READY with valid CSRF and trusted origin', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/api/v1/orders/${orderId}/status`)
+        .set('Origin', 'http://localhost:5174')
         .set('Cookie', kitchenCreds.cookieHeader)
+        .set('X-CSRF-Token', kitchenCreds.csrfToken)
         .send({ status: OrderStatus.READY })
         .expect(200);
 
@@ -416,17 +532,21 @@ describe('Aurel Commerce & Orders End-to-End Tests', () => {
     it('strictly forbids KITCHEN from marking order as SERVED (lacks orders.serve)', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/api/v1/orders/${orderId}/status`)
+        .set('Origin', 'http://localhost:5174')
         .set('Cookie', kitchenCreds.cookieHeader)
+        .set('X-CSRF-Token', kitchenCreds.csrfToken)
         .send({ status: OrderStatus.SERVED })
         .expect(403);
 
       expect(res.body.code).toBe('FORBIDDEN');
     });
 
-    it('allows STAFF to mark order as SERVED', async () => {
+    it('allows STAFF to mark order as SERVED with valid CSRF and trusted origin', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/api/v1/orders/${orderId}/status`)
+        .set('Origin', 'http://localhost:5174')
         .set('Cookie', staffCreds.cookieHeader)
+        .set('X-CSRF-Token', staffCreds.csrfToken)
         .send({ status: OrderStatus.SERVED })
         .expect(200);
 
