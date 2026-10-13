@@ -2,7 +2,7 @@ import { validateDemoDatabaseTarget, seedDemoStaff } from './seed-demo-staff';
 import { UserRole } from '@prisma/client';
 import { PasswordService } from '../identity/password.service';
 
-describe('Demo Staff Seeding Safety & Target Guard (Gate C)', () => {
+describe('Demo Staff Seeding Safety & Target Guard (Gate 1)', () => {
   let mockPasswordService: PasswordService;
 
   beforeEach(() => {
@@ -13,17 +13,17 @@ describe('Demo Staff Seeding Safety & Target Guard (Gate C)', () => {
   });
 
   describe('Database Target Validation (validateDemoDatabaseTarget)', () => {
-    it('succeeds for allowed isolated local demo database target (aurel_dev)', () => {
+    it('succeeds for preferred isolated local evaluation target (aurel_demo) without extra flags', () => {
       const res = validateDemoDatabaseTarget(
-        'postgresql://postgres:pass@127.0.0.1:5432/aurel_dev?schema=public',
+        'postgresql://postgres:pass@127.0.0.1:5432/aurel_demo?schema=public',
         'development',
       );
       expect(res.valid).toBe(true);
-      expect(res.database).toBe('aurel_dev');
+      expect(res.database).toBe('aurel_demo');
       expect(res.hostname).toBe('127.0.0.1');
     });
 
-    it('succeeds for localhost test target (aurel_test)', () => {
+    it('succeeds for automated test database target (aurel_test) without extra flags', () => {
       const res = validateDemoDatabaseTarget(
         'postgresql://postgres:pass@localhost:5432/aurel_test?schema=public',
         'test',
@@ -32,19 +32,47 @@ describe('Demo Staff Seeding Safety & Target Guard (Gate C)', () => {
       expect(res.database).toBe('aurel_test');
     });
 
-    it('succeeds for dedicated demo database target (aurel_demo)', () => {
-      const res = validateDemoDatabaseTarget(
-        'postgresql://postgres:pass@127.0.0.1:5432/aurel_demo?schema=public',
-        'development',
-      );
-      expect(res.valid).toBe(true);
-      expect(res.database).toBe('aurel_demo');
-    });
-
-    it('rejects execution when NODE_ENV is production unconditionally', () => {
+    it('rejects target database aurel_dev when explicit opt-in flag is missing', () => {
       const res = validateDemoDatabaseTarget(
         'postgresql://postgres:pass@127.0.0.1:5432/aurel_dev?schema=public',
+        'development',
+        'false',
+      );
+      expect(res.valid).toBe(false);
+      expect(res.reason).toContain('ALLOW_DEV_DB_DEMO_SEED=true');
+    });
+
+    it('succeeds for target database aurel_dev when explicit opt-in flag ALLOW_DEV_DB_DEMO_SEED=true is set', () => {
+      const res = validateDemoDatabaseTarget(
+        'postgresql://postgres:pass@127.0.0.1:5432/aurel_dev?schema=public',
+        'development',
+        'true',
+      );
+      expect(res.valid).toBe(true);
+      expect(res.database).toBe('aurel_dev');
+    });
+
+    it('rejects arbitrary database names with wildcards (e.g., custom_dev, my_demo, shop_test)', () => {
+      const resDev = validateDemoDatabaseTarget(
+        'postgresql://postgres:pass@127.0.0.1:5432/custom_dev',
+        'development',
+      );
+      expect(resDev.valid).toBe(false);
+      expect(resDev.reason).toContain('not an authorized demo target');
+
+      const resDemo = validateDemoDatabaseTarget(
+        'postgresql://postgres:pass@127.0.0.1:5432/my_demo',
+        'development',
+      );
+      expect(resDemo.valid).toBe(false);
+      expect(resDemo.reason).toContain('not an authorized demo target');
+    });
+
+    it('strictly rejects execution when NODE_ENV is production regardless of database name or flags', () => {
+      const res = validateDemoDatabaseTarget(
+        'postgresql://postgres:pass@127.0.0.1:5432/aurel_demo?schema=public',
         'production',
+        'true',
       );
       expect(res.valid).toBe(false);
       expect(res.reason).toContain('strictly prohibited in production');
@@ -62,13 +90,23 @@ describe('Demo Staff Seeding Safety & Target Guard (Gate C)', () => {
       expect(res.reason).toContain('not a valid URL');
     });
 
-    it('rejects unexpected remote database host (e.g. AWS RDS or remote IP)', () => {
-      const res = validateDemoDatabaseTarget(
-        'postgresql://admin:secret@rds.us-east-1.amazonaws.com:5432/aurel_dev',
-        'development',
-      );
-      expect(res.valid).toBe(false);
-      expect(res.reason).toContain('not an authorized local demo database host');
+    it('strictly rejects remote database hosts even if override environment variable was set', () => {
+      const originalEnv = process.env.ALLOW_REMOTE_DEMO_DB;
+      process.env.ALLOW_REMOTE_DEMO_DB = 'true';
+      try {
+        const res = validateDemoDatabaseTarget(
+          'postgresql://admin:secret@rds.us-east-1.amazonaws.com:5432/aurel_demo',
+          'development',
+        );
+        expect(res.valid).toBe(false);
+        expect(res.reason).toContain('restricted strictly to local interfaces');
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env.ALLOW_REMOTE_DEMO_DB;
+        } else {
+          process.env.ALLOW_REMOTE_DEMO_DB = originalEnv;
+        }
+      }
     });
 
     it('rejects non-demo database target on localhost (e.g. production database or default postgres)', () => {
@@ -96,15 +134,16 @@ describe('Demo Staff Seeding Safety & Target Guard (Gate C)', () => {
 
       mockPrisma = {
         $transaction: jest.fn((callback) => callback(mockTx)),
+        $queryRaw: jest.fn().mockResolvedValue([{ current_database: 'aurel_demo' }]),
       };
     });
 
-    it('safely provisions accounts when none exist on allowed target', async () => {
+    it('safely provisions accounts on aurel_demo when none exist', async () => {
       mockTx.user.findUnique.mockResolvedValue(null);
       mockTx.user.create.mockResolvedValue({ id: 'uuid-1' });
 
       const result = await seedDemoStaff(mockPrisma, mockPasswordService, {
-        connectionString: 'postgresql://postgres:pass@127.0.0.1:5432/aurel_dev',
+        connectionString: 'postgresql://postgres:pass@127.0.0.1:5432/aurel_demo',
         demoPassword: 'TestPassword2026!',
       });
 
@@ -112,6 +151,18 @@ describe('Demo Staff Seeding Safety & Target Guard (Gate C)', () => {
       expect(result.created.length).toBe(3);
       expect(mockTx.user.create).toHaveBeenCalledTimes(3);
       expect(mockTx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses execution if active PostgreSQL current_database mismatch occurs', async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([{ current_database: 'other_database' }]);
+
+      const result = await seedDemoStaff(mockPrisma, mockPasswordService, {
+        connectionString: 'postgresql://postgres:pass@127.0.0.1:5432/aurel_demo',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('Database connection target mismatch');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('strictly refuses to elevate existing normal CUSTOMER account with matching demo email', async () => {
@@ -128,12 +179,11 @@ describe('Demo Staff Seeding Safety & Target Guard (Gate C)', () => {
       });
 
       const result = await seedDemoStaff(mockPrisma, mockPasswordService, {
-        connectionString: 'postgresql://postgres:pass@127.0.0.1:5432/aurel_dev',
+        connectionString: 'postgresql://postgres:pass@127.0.0.1:5432/aurel_demo',
       });
 
       expect(result.refused).toContain('staff@aurel.restaurant');
       expect(mockTx.user.update).not.toHaveBeenCalled();
-      // Should not have created staff@aurel.restaurant
       expect(mockTx.user.create).toHaveBeenCalledTimes(2);
     });
 
@@ -151,7 +201,7 @@ describe('Demo Staff Seeding Safety & Target Guard (Gate C)', () => {
       });
 
       const result = await seedDemoStaff(mockPrisma, mockPasswordService, {
-        connectionString: 'postgresql://postgres:pass@127.0.0.1:5432/aurel_dev',
+        connectionString: 'postgresql://postgres:pass@127.0.0.1:5432/aurel_demo',
       });
 
       expect(result.preserved).toContain('admin@aurel.restaurant');
@@ -174,7 +224,7 @@ describe('Demo Staff Seeding Safety & Target Guard (Gate C)', () => {
       });
 
       const result = await seedDemoStaff(mockPrisma, mockPasswordService, {
-        connectionString: 'postgresql://postgres:pass@127.0.0.1:5432/aurel_dev',
+        connectionString: 'postgresql://postgres:pass@127.0.0.1:5432/aurel_demo',
       });
 
       expect(result.success).toBe(true);
@@ -192,7 +242,7 @@ describe('Demo Staff Seeding Safety & Target Guard (Gate C)', () => {
 
       await expect(
         seedDemoStaff(mockPrisma, mockPasswordService, {
-          connectionString: 'postgresql://postgres:pass@127.0.0.1:5432/aurel_dev',
+          connectionString: 'postgresql://postgres:pass@127.0.0.1:5432/aurel_demo',
         }),
       ).rejects.toThrow('PostgreSQL connection drop');
 

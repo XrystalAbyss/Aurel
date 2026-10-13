@@ -17,13 +17,23 @@ export interface DatabaseTargetValidation {
 }
 
 /**
- * Validates that the database connection target is an explicitly authorized,
+ * Validates that the database connection target is an explicitly approved,
  * isolated local demo or test database environment.
- * Fails closed on malformed URLs, non-local hosts, non-demo databases, or production environments.
+ *
+ * Invariants:
+ * 1. Strictly rejects production (NODE_ENV=production) regardless of any flags or overrides.
+ * 2. Restricts hosts strictly to local loopback interfaces (127.0.0.1, localhost, ::1).
+ *    Unrestricted remote overrides (e.g., ALLOW_REMOTE_DEMO_DB) are eliminated.
+ * 3. Enforces an exact named allowlist:
+ *    - 'aurel_demo': Preferred dedicated disposable evaluation database.
+ *    - 'aurel_test': Automated testing database.
+ *    - 'aurel_dev': Allowed ONLY with explicit opt-in (ALLOW_DEV_DB_DEMO_SEED=true).
+ * 4. Rejects arbitrary wildcard suffixes (e.g. *_dev, *_test, *_demo).
  */
 export function validateDemoDatabaseTarget(
   connectionString?: string,
   nodeEnv = process.env.NODE_ENV,
+  allowDevDbOptIn = process.env.ALLOW_DEV_DB_DEMO_SEED,
 ): DatabaseTargetValidation {
   if (nodeEnv === 'production') {
     return {
@@ -50,11 +60,11 @@ export function validateDemoDatabaseTarget(
   }
 
   const hostname = parsed.hostname.toLowerCase();
-  const allowedHosts = new Set(['127.0.0.1', 'localhost', '::1', '0.0.0.0']);
-  if (!allowedHosts.has(hostname) && process.env.ALLOW_REMOTE_DEMO_DB !== 'true') {
+  const allowedHosts = new Set(['127.0.0.1', 'localhost', '::1']);
+  if (!allowedHosts.has(hostname)) {
     return {
       valid: false,
-      reason: `Target host '${hostname}' is not an authorized local demo database host. Refusing execution.`,
+      reason: `Target host '${hostname}' is not an authorized local demo host. Seeding is restricted strictly to local interfaces (127.0.0.1, localhost, ::1).`,
       hostname,
     };
   }
@@ -67,25 +77,35 @@ export function validateDemoDatabaseTarget(
     };
   }
 
-  const isAllowedDb =
-    dbName === 'aurel_dev' ||
-    dbName === 'aurel_test' ||
-    dbName === 'aurel_demo' ||
-    dbName.endsWith('_dev') ||
-    dbName.endsWith('_test') ||
-    dbName.endsWith('_demo');
-
-  if (!isAllowedDb) {
+  // Exact named allowlist policy
+  if (dbName === 'aurel_demo' || dbName === 'aurel_test') {
     return {
-      valid: false,
-      reason: `Target database '${dbName}' is not an authorized demo target. Must match aurel_dev, aurel_test, aurel_demo, or end with _dev/_test/_demo.`,
+      valid: true,
+      hostname,
+      database: dbName,
+    };
+  }
+
+  if (dbName === 'aurel_dev') {
+    if (allowDevDbOptIn !== 'true') {
+      return {
+        valid: false,
+        reason:
+          "Target database 'aurel_dev' requires explicit opt-in via ALLOW_DEV_DB_DEMO_SEED=true to seed demonstration accounts. Prefer dedicated 'aurel_demo' target.",
+        hostname,
+        database: dbName,
+      };
+    }
+    return {
+      valid: true,
       hostname,
       database: dbName,
     };
   }
 
   return {
-    valid: true,
+    valid: false,
+    reason: `Target database '${dbName}' is not an authorized demo target. Must be exactly 'aurel_demo' or 'aurel_test' (or 'aurel_dev' with ALLOW_DEV_DB_DEMO_SEED=true).`,
     hostname,
     database: dbName,
   };
@@ -105,10 +125,16 @@ export async function seedDemoStaff(
   options?: {
     connectionString?: string;
     demoPassword?: string;
+    allowDevDbOptIn?: string;
   },
 ): Promise<SeedDemoStaffResult> {
   const connectionString = options?.connectionString || process.env.DATABASE_URL;
-  const targetCheck = validateDemoDatabaseTarget(connectionString);
+  const targetCheck = validateDemoDatabaseTarget(
+    connectionString,
+    process.env.NODE_ENV,
+    options?.allowDevDbOptIn ?? process.env.ALLOW_DEV_DB_DEMO_SEED,
+  );
+
   if (!targetCheck.valid) {
     return {
       success: false,
@@ -117,6 +143,29 @@ export async function seedDemoStaff(
       preserved: [],
       refused: [],
     };
+  }
+
+  // Engine-level active database target verification
+  try {
+    const dbCheck = await prisma.$queryRaw<
+      Array<{ current_database: string }>
+    >`SELECT current_database();`;
+    const actualConnectedDb = dbCheck[0]?.current_database?.toLowerCase();
+
+    if (actualConnectedDb && actualConnectedDb !== targetCheck.database) {
+      return {
+        success: false,
+        message: `Database connection target mismatch: expected '${targetCheck.database}', but actively connected to '${actualConnectedDb}'. Refusing execution.`,
+        created: [],
+        preserved: [],
+        refused: [],
+      };
+    }
+  } catch (err: any) {
+    // If running in a mock context where $queryRaw is not defined, proceed if mock handles it
+    if (!err.message?.includes('not a function')) {
+      throw err;
+    }
   }
 
   const demoPassword =
@@ -144,7 +193,7 @@ export async function seedDemoStaff(
   const preserved: string[] = [];
   const refused: string[] = [];
 
-  // Atomic transaction to prevent partial state on failure
+  // Atomic transaction to guarantee zero partial state on failure
   await prisma.$transaction(async (tx) => {
     for (const acc of demoAccounts) {
       const existing = await tx.user.findUnique({
@@ -170,7 +219,7 @@ export async function seedDemoStaff(
           continue;
         }
 
-        // Invariant 3: Preserve existing staff identities without overwriting
+        // Invariant 3: Preserve existing staff identities without mutation
         preserved.push(acc.email);
         console.log(
           `[PRESERVED] Existing staff identity '${acc.email}' (${existing.role}) preserved without mutation.`,
@@ -206,7 +255,11 @@ export async function seedDemoStaff(
 
 export async function runDemoStaffSeed(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
-  const targetCheck = validateDemoDatabaseTarget(connectionString);
+  const targetCheck = validateDemoDatabaseTarget(
+    connectionString,
+    process.env.NODE_ENV,
+    process.env.ALLOW_DEV_DB_DEMO_SEED,
+  );
 
   if (!targetCheck.valid) {
     console.error(`[CRITICAL TARGET GUARD] Refusing seed execution: ${targetCheck.reason}`);
