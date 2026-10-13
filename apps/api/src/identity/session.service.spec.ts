@@ -19,6 +19,9 @@ describe('SessionService Unit Tests', () => {
     phone: null,
     role: UserRole.CUSTOMER,
     isActive: true,
+    isPendingSetup: false,
+    setupTokenDigest: null,
+    setupTokenExpiresAt: null,
     createdAt: mockDate,
     updatedAt: mockDate,
   };

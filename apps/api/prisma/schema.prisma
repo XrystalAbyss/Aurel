@@ -35,14 +35,21 @@ model User {
   fullName     String    @map("full_name") @db.VarChar(100)
   phone        String?   @db.VarChar(20)
   role         UserRole  @default(CUSTOMER)
-  isActive     Boolean   @default(true) @map("is_active")
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  isActive            Boolean   @default(true) @map("is_active")
+  isPendingSetup      Boolean   @default(false) @map("is_pending_setup")
+  setupTokenDigest    String?   @map("setup_token_digest") @db.VarChar(64)
+  setupTokenExpiresAt DateTime? @map("setup_token_expires_at") @db.Timestamptz
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
-  sessions     AuthSession[]
+  sessions        AuthSession[]
+  actorAuditLogs  AuditLog[]    @relation("ActorAuditLogs")
+  targetAuditLogs AuditLog[]    @relation("TargetAuditLogs")
+  orders          Order[]
 
   @@index([createdAt])
   @@index([phone])
+  @@index([setupTokenDigest])
   @@map("users")
 }
 
@@ -62,4 +69,217 @@ model AuthSession {
   @@index([userId, revokedAt])
   @@index([expiresAt])
   @@map("auth_sessions")
+}
+
+enum AuditAction {
+  STAFF_USER_CREATED
+  USER_ROLE_UPDATED
+  USER_DEACTIVATED
+  USER_REACTIVATED
+  INITIAL_ADMIN_BOOTSTRAPPED
+  STAFF_PASSWORD_ESTABLISHED
+
+  @@map("audit_action")
+}
+
+/// Append-only security audit log for privileged administrative and identity actions
+model AuditLog {
+  id        String      @id @default(uuid()) @db.Uuid
+  actorId   String?     @map("actor_id") @db.Uuid
+  targetId  String?     @map("target_id") @db.Uuid
+  action    AuditAction @map("action")
+  requestId String?     @map("request_id") @db.VarChar(100)
+  clientIp  String?     @map("client_ip") @db.VarChar(50)
+  metadata  Json?       @map("metadata")
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  actor     User?       @relation("ActorAuditLogs", fields: [actorId], references: [id], onDelete: SetNull)
+  target    User?       @relation("TargetAuditLogs", fields: [targetId], references: [id], onDelete: SetNull)
+
+  @@index([targetId])
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+/// Menu category (e.g. Starters, Main Course, Artisanal Pastas, Wood-Fired Pizzas, Desserts, Beverages)
+model Category {
+  id          String     @id @default(uuid()) @db.Uuid
+  name        String     @db.VarChar(100)
+  slug        String     @unique @db.VarChar(100)
+  description String?    @db.Text
+  sortOrder   Int        @default(0) @map("sort_order")
+  isActive    Boolean    @default(true) @map("is_active")
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  items       MenuItem[]
+
+  @@index([sortOrder])
+  @@map("categories")
+}
+
+/// Menu item with price in integer paise (1 INR = 100 paise)
+model MenuItem {
+  id           String          @id @default(uuid()) @db.Uuid
+  categoryId   String          @map("category_id") @db.Uuid
+  name         String          @db.VarChar(150)
+  slug         String          @unique @db.VarChar(150)
+  description  String          @db.Text
+  pricePaise   Int             @map("price_paise")
+  imageUrl     String?         @map("image_url") @db.VarChar(500)
+  isAvailable  Boolean         @default(true) @map("is_available")
+  dietaryFlags String[]        @default([]) @map("dietary_flags")
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  category       Category        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  modifierGroups ModifierGroup[]
+  orderItems     OrderItem[]
+
+  @@index([categoryId, isAvailable])
+  @@map("menu_items")
+}
+
+/// Customization group for a menu item (e.g. Preparation Style, Side Selection)
+model ModifierGroup {
+  id            String           @id @default(uuid()) @db.Uuid
+  itemId        String           @map("item_id") @db.Uuid
+  name          String           @db.VarChar(100)
+  minSelections Int              @default(0) @map("min_selections")
+  maxSelections Int              @default(1) @map("max_selections")
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  menuItem      MenuItem         @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  options       ModifierOption[]
+
+  @@index([itemId])
+  @@map("modifier_groups")
+}
+
+/// Specific modifier choice within a group
+model ModifierOption {
+  id         String        @id @default(uuid()) @db.Uuid
+  groupId    String        @map("group_id") @db.Uuid
+  name       String        @db.VarChar(100)
+  pricePaise Int           @default(0) @map("price_paise")
+  isDefault  Boolean       @default(false) @map("is_default")
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  group      ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@map("modifier_options")
+}
+
+enum FulfillmentChannel {
+  DELIVERY
+  PICKUP
+  DINE_IN
+
+  @@map("fulfillment_channel")
+}
+
+enum OrderStatus {
+  PLACED
+  ACCEPTED
+  PREPARING
+  READY
+  DISPATCHED
+  DELIVERED
+  COLLECTED
+  SERVED
+  REJECTED
+  CANCELLED
+
+  @@map("order_status")
+}
+
+enum PaymentMode {
+  CASH
+  DEMO
+
+  @@map("payment_mode")
+}
+
+enum PaymentStatus {
+  INITIATED
+  PROCESSING
+  SUCCESS
+  FAILED
+  REFUNDED
+
+  @@map("payment_status")
+}
+
+/// Customer order persisted in integer paise with idempotency key
+model Order {
+  id                  String             @id @default(uuid()) @db.Uuid
+  orderNumber         String             @unique @map("order_number") @db.VarChar(50)
+  idempotencyKey      String             @unique @map("idempotency_key") @db.VarChar(128)
+  customerId          String?            @map("customer_id") @db.Uuid
+  customerName        String             @map("customer_name") @db.VarChar(100)
+  customerEmail       String             @map("customer_email") @db.VarChar(255)
+  customerPhone       String             @map("customer_phone") @db.VarChar(30)
+  fulfillmentChannel  FulfillmentChannel @map("fulfillment_channel")
+  deliveryAddress     String?            @map("delivery_address") @db.Text
+  tableNumber         String?            @map("table_number") @db.VarChar(20)
+  specialInstructions String?            @map("special_instructions") @db.Text
+  status              OrderStatus        @default(PLACED)
+  paymentMode         PaymentMode        @map("payment_mode")
+  paymentStatus       PaymentStatus      @default(INITIATED) @map("payment_status")
+  subtotalPaise       Int                @map("subtotal_paise")
+  taxPaise            Int                @map("tax_paise")
+  deliveryFeePaise    Int                @default(0) @map("delivery_fee_paise")
+  totalPaise          Int                @map("total_paise")
+  guestTokenHash      String?            @map("guest_token_hash") @db.VarChar(64)
+  requestFingerprint  String?            @map("request_fingerprint") @db.VarChar(64)
+  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  customer            User?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items               OrderItem[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([createdAt])
+  @@index([guestTokenHash])
+  @@map("orders")
+}
+
+/// Individual line item in an order
+model OrderItem {
+  id             String              @id @default(uuid()) @db.Uuid
+  orderId        String              @map("order_id") @db.Uuid
+  menuItemId     String              @map("menu_item_id") @db.Uuid
+  name           String              @db.VarChar(150)
+  unitPricePaise Int                 @map("unit_price_paise")
+  quantity       Int
+  lineTotalPaise Int                 @map("line_total_paise")
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz
+
+  order          Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem       MenuItem            @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+  modifiers      OrderItemModifier[]
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+/// Selected modifier option snapshot for an order item
+model OrderItemModifier {
+  id          String    @id @default(uuid()) @db.Uuid
+  orderItemId String    @map("order_item_id") @db.Uuid
+  optionId    String    @map("option_id") @db.Uuid
+  name        String    @db.VarChar(100)
+  pricePaise  Int       @map("price_paise")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([orderItemId])
+  @@map("order_item_modifiers")
 }

@@ -2,18 +2,22 @@ import {
   Injectable,
   ConflictException,
   UnauthorizedException,
+  ForbiddenException,
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
-import { Prisma, User, AuthSession } from '@prisma/client';
+import { Prisma, User, AuthSession, AuditAction, UserRole } from '@prisma/client';
 import { ErrorCode } from '@aurel/shared-types';
+import * as crypto from 'crypto';
 import { PasswordService } from './password.service';
 import { UsersRepository } from './users.repository';
 import { SessionService } from './session.service';
 import { RateLimiterService } from './rate-limiter.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { RegisterCustomerDto } from './dto/register-customer.dto';
 import { PublicUserResponseDto } from './dto/public-user-response.dto';
 import { LoginDto } from './dto/login.dto';
+import { SetupPasswordDto } from './dto/setup-password.dto';
 
 export interface AuthenticationResult {
   user: User;
@@ -30,6 +34,7 @@ export class IdentityService {
     private readonly passwordService: PasswordService,
     private readonly sessionService: SessionService,
     private readonly rateLimiterService: RateLimiterService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -131,14 +136,17 @@ export class IdentityService {
    * 4. Verifies password using Argon2id with concurrency gating.
    *    - Uses dummy-hash verification for nonexistent accounts to eliminate timing side channels.
    * 5. Checks account active status (isActive === true).
-   * 6. Generates opaque 256-bit token and persists HMAC digest in PostgreSQL.
-   * 7. Resets failed login rate-limit counter on success.
-   * 8. Returns sanitized user, session, and raw bearer token.
+   * 6. Validates account provisioning state (isPendingSetup === false).
+   * 7. Enforces endpoint role scoping prior to session generation.
+   * 8. Generates opaque 256-bit token and persists HMAC digest in PostgreSQL.
+   * 9. Resets failed login rate-limit counter on success.
+   * 10. Returns sanitized user, session, and raw bearer token.
    */
   async authenticateCustomer(
     dto: LoginDto,
     clientIp: string,
     userAgent?: string | null,
+    allowedRoles?: UserRole[],
   ): Promise<AuthenticationResult> {
     // Abuse defense: IP rate limit
     this.rateLimiterService.consume(this.rateLimiterService.getPolicy('LOGIN_IP'), clientIp);
@@ -175,6 +183,26 @@ export class IdentityService {
       });
     }
 
+    // Gate D: Unprovisioned or pending identities cannot authenticate
+    if (user.isPendingSetup) {
+      this.logger.warn('Authentication rejected: staff account pending credential setup');
+      throw new UnauthorizedException({
+        message: 'Account setup pending: initial credential must be established prior to login.',
+        code: ErrorCode.UNAUTHORIZED,
+        error: 'Unauthorized',
+      });
+    }
+
+    // Gate F: Reject unauthorized roles before issuing any session
+    if (allowedRoles && !allowedRoles.includes(user.role as UserRole)) {
+      this.logger.warn(`Authentication rejected: role ${user.role} not permitted on endpoint`);
+      throw new ForbiddenException({
+        message: 'Customer accounts are not authorized to access the operations workspace.',
+        code: ErrorCode.FORBIDDEN,
+        error: 'Forbidden',
+      });
+    }
+
     // Successful authentication: reset failed-attempt counter for this account
     this.rateLimiterService.reset(this.rateLimiterService.getPolicy('LOGIN_ACCOUNT'), emailKey);
 
@@ -182,5 +210,98 @@ export class IdentityService {
     const { session, rawToken } = await this.sessionService.createSession(user.id, userAgent);
 
     return { user, session, rawToken };
+  }
+
+  /**
+   * Completes initial staff credential provisioning using a single-use setup token:
+   * 1. Hashes incoming token to find matching pending staff user.
+   * 2. Verifies token is not expired and account is in pending setup state.
+   * 3. Hashes new password with Argon2id.
+   * 4. Updates password, clears setup token, marks isPendingSetup = false.
+   * 5. Atomically inserts audit log record.
+   */
+  async setupPassword(
+    dto: SetupPasswordDto,
+    clientIp?: string,
+  ): Promise<{ success: boolean; message: string }> {
+    // Abuse defense: IP rate limit
+    this.rateLimiterService.consume(
+      this.rateLimiterService.getPolicy('SETUP_IP'),
+      clientIp || '127.0.0.1',
+    );
+
+    const rawToken = dto.token.trim();
+    const tokenDigest = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const tokenKey = this.rateLimiterService.hashIdentifier(tokenDigest);
+
+    // Abuse defense: token attempt rate limit
+    this.rateLimiterService.consume(this.rateLimiterService.getPolicy('SETUP_TOKEN'), tokenKey);
+
+    const user = await this.prisma.user.findFirst({
+      where: {
+        setupTokenDigest: tokenDigest,
+        isPendingSetup: true,
+      },
+    });
+
+    const now = new Date();
+    if (!user || !user.setupTokenExpiresAt || user.setupTokenExpiresAt < now) {
+      // Timing attack mitigation: perform identical dummy hashing work
+      const releaseSlot = await this.rateLimiterService.acquireHashSlot();
+      try {
+        await this.passwordService.verifyDummy(dto.newPassword);
+      } finally {
+        releaseSlot();
+      }
+
+      this.logger.warn('Password setup rejected: invalid or expired setup token');
+      throw new UnauthorizedException({
+        message: 'Invalid or expired account setup token.',
+        code: ErrorCode.UNAUTHORIZED,
+        error: 'Unauthorized',
+      });
+    }
+
+    // Hash new password using Argon2id with concurrency slot gating
+    const releaseSlot = await this.rateLimiterService.acquireHashSlot();
+    let newHash: string;
+    try {
+      newHash = await this.passwordService.hash(dto.newPassword);
+    } finally {
+      releaseSlot();
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash: newHash,
+          isPendingSetup: false,
+          setupTokenDigest: null,
+          setupTokenExpiresAt: null,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          targetId: user.id,
+          action: AuditAction.STAFF_PASSWORD_ESTABLISHED,
+          clientIp: clientIp || null,
+          metadata: {
+            email: user.email,
+            role: user.role,
+          },
+        },
+      });
+    });
+
+    this.rateLimiterService.reset(this.rateLimiterService.getPolicy('SETUP_TOKEN'), tokenKey);
+
+    this.logger.log(`Password successfully established for staff user ID: ${user.id}`);
+    return {
+      success: true,
+      message: 'Password established successfully. You may now log in to the operations workspace.',
+    };
   }
 }

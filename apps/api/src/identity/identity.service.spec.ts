@@ -29,6 +29,9 @@ describe('IdentityService', () => {
     phone: '+919876543210',
     role: UserRole.CUSTOMER,
     isActive: true,
+    isPendingSetup: false,
+    setupTokenDigest: null,
+    setupTokenExpiresAt: null,
     createdAt: mockDate,
     updatedAt: mockDate,
   };
@@ -43,6 +46,8 @@ describe('IdentityService', () => {
     lastSeenAt: mockDate,
     userAgent: 'Jest Test Agent',
   };
+
+  let mockPrisma: jest.Mocked<any>;
 
   beforeEach(() => {
     mockUsersRepository = {
@@ -82,11 +87,24 @@ describe('IdentityService', () => {
       extractClientIp: jest.fn().mockReturnValue('127.0.0.1'),
     } as unknown as jest.Mocked<RateLimiterService>;
 
+    mockPrisma = {
+      user: {
+        findFirst: jest.fn(),
+        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      auditLog: {
+        create: jest.fn(),
+      },
+      $transaction: jest.fn().mockImplementation(async (cb) => cb(mockPrisma)),
+    };
+
     service = new IdentityService(
       mockUsersRepository,
       mockPasswordService,
       mockSessionService,
       mockRateLimiterService,
+      mockPrisma,
     );
   });
 
@@ -242,6 +260,87 @@ describe('IdentityService', () => {
       );
 
       expect(mockSessionService.createSession).not.toHaveBeenCalled();
+    });
+
+    it('rejects with UnauthorizedException when staff account is in pending-setup state (Gate D)', async () => {
+      const pendingStaffUser: User = {
+        ...sampleUser,
+        role: UserRole.STAFF,
+        isPendingSetup: true,
+      };
+      mockUsersRepository.findByEmail.mockResolvedValue(pendingStaffUser);
+      mockPasswordService.verify.mockResolvedValue(true);
+
+      await expect(service.authenticateCustomer(validLoginDto, '192.168.1.1')).rejects.toThrow(
+        UnauthorizedException,
+      );
+
+      expect(mockSessionService.createSession).not.toHaveBeenCalled();
+    });
+
+    it('rejects CUSTOMER role with ForbiddenException before session creation when allowedRoles excludes CUSTOMER (Gate F)', async () => {
+      mockUsersRepository.findByEmail.mockResolvedValue(sampleUser); // role: CUSTOMER
+      mockPasswordService.verify.mockResolvedValue(true);
+
+      await expect(
+        service.authenticateCustomer(validLoginDto, '192.168.1.1', undefined, [
+          UserRole.STAFF,
+          UserRole.KITCHEN,
+          UserRole.MANAGER,
+          UserRole.ADMIN,
+        ]),
+      ).rejects.toThrow('Customer accounts are not authorized to access the operations workspace');
+
+      expect(mockSessionService.createSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('setupPassword (Gate D)', () => {
+    it('establishes permanent password, clears setup token, and records audit event', async () => {
+      const pendingUser: User = {
+        ...sampleUser,
+        role: UserRole.STAFF,
+        isPendingSetup: true,
+        setupTokenExpiresAt: new Date(Date.now() + 100000),
+      };
+
+      mockPrisma.user.findFirst.mockResolvedValue(pendingUser);
+      mockPasswordService.hash.mockResolvedValue('$argon2id$v=19$newHash');
+      mockPrisma.user.update.mockResolvedValue({ ...pendingUser, isPendingSetup: false });
+      mockPrisma.auditLog.create.mockResolvedValue({});
+
+      const result = await service.setupPassword(
+        {
+          token: 'valid_test_token_entropy_1234567890',
+          newPassword: 'MyNewPermanentPassword123!',
+        },
+        '192.168.1.1',
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: pendingUser.id },
+          data: expect.objectContaining({
+            isPendingSetup: false,
+            setupTokenDigest: null,
+            setupTokenExpiresAt: null,
+          }),
+        }),
+      );
+    });
+
+    it('rejects with UnauthorizedException when setup token is invalid or expired', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.setupPassword({
+          token: 'expired_or_invalid_token',
+          newPassword: 'ValidPassword123!',
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
   });
 });

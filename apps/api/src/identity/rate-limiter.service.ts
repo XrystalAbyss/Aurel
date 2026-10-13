@@ -12,7 +12,12 @@ export interface RateLimitPolicy {
 }
 
 export type RateLimitPolicyType =
-  'REGISTRATION_IP' | 'REGISTRATION_EMAIL' | 'LOGIN_IP' | 'LOGIN_ACCOUNT';
+  | 'REGISTRATION_IP'
+  | 'REGISTRATION_EMAIL'
+  | 'LOGIN_IP'
+  | 'LOGIN_ACCOUNT'
+  | 'SETUP_IP'
+  | 'SETUP_TOKEN';
 
 interface RateLimitRecord {
   count: number;
@@ -91,6 +96,18 @@ export class RateLimiterService implements OnModuleDestroy {
       case 'LOGIN_ACCOUNT':
         return {
           keyPrefix: 'rate:login:account',
+          maxAttempts: custom ?? (isTest ? 50 : 5),
+          windowSeconds: 15 * 60, // 15 minutes
+        };
+      case 'SETUP_IP':
+        return {
+          keyPrefix: 'rate:setup:ip',
+          maxAttempts: custom ?? (isTest ? 100 : 10),
+          windowSeconds: 15 * 60, // 15 minutes
+        };
+      case 'SETUP_TOKEN':
+        return {
+          keyPrefix: 'rate:setup:token',
           maxAttempts: custom ?? (isTest ? 50 : 5),
           windowSeconds: 15 * 60, // 15 minutes
         };
